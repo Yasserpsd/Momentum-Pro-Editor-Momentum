@@ -1,50 +1,39 @@
 /**
- * Momentum Pro Editor v2.0 - Preview Styles
+ * Momentum Pro Editor v2.1 - Preview Styles
  */
 
-/* ================================
-   Main Container
-   ================================ */
+/* Main Container */
 .momentum-html-output {
     position: relative;
     width: 100%;
     transition: all 0.3s ease;
 }
 
-/* ================================
-   Editable Elements
-   ================================ */
+/* Editable Elements */
 .elementor-editor-active .momentum-editable [contenteditable="true"] {
     transition: outline 0.15s ease, background-color 0.15s ease;
     cursor: text !important;
 }
-
 .elementor-editor-active .momentum-editable [contenteditable="true"]:hover {
     outline: 2px dashed rgba(108, 99, 255, 0.4) !important;
     outline-offset: 2px !important;
 }
-
 .elementor-editor-active .momentum-editable [contenteditable="true"]:focus {
     outline: 2px solid #6C63FF !important;
     outline-offset: 3px !important;
 }
 
-/* ================================
-   Image Hover
-   ================================ */
+/* Image Hover */
 .elementor-editor-active .momentum-editable img {
     transition: outline 0.15s ease;
     cursor: pointer !important;
 }
-
 .elementor-editor-active .momentum-editable img:hover {
     outline: 3px solid rgba(108, 99, 255, 0.5) !important;
     outline-offset: 3px !important;
 }
 
-/* ================================
-   Container Hover
-   ================================ */
+/* Container Hover */
 .elementor-editor-active .momentum-editable > div:hover,
 .elementor-editor-active .momentum-editable > section:hover,
 .elementor-editor-active .momentum-editable > article:hover {
@@ -52,14 +41,11 @@
     outline-offset: 1px !important;
 }
 
-/* ================================
-   Link Indicator
-   ================================ */
+/* Link Indicator */
 .elementor-editor-active .momentum-editable a {
     position: relative;
     cursor: text !important;
 }
-
 .elementor-editor-active .momentum-editable a::after {
     content: '🔗';
     position: absolute;
@@ -70,63 +56,41 @@
     transition: opacity 0.2s;
     pointer-events: none;
 }
-
 .elementor-editor-active .momentum-editable a:hover::after {
     opacity: 1;
 }
 
-/* ================================
-   Resize Handle
-   ================================ */
+/* Resize Handle */
 .m-resize-handle {
     transition: transform 0.15s;
 }
-
 .m-resize-handle:hover {
     transform: scale(1.3);
 }
 
-/* ================================
-   Toolbar Animations
-   ================================ */
+/* Toolbar Animation */
 #m-toolbar,
+.m-img-bar,
 .m-img-controls,
+.m-box-bar,
 #m-link-editor {
     animation: mToolbarIn 0.2s ease-out;
 }
-
 @keyframes mToolbarIn {
-    from {
-        opacity: 0;
-        transform: translateY(5px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
+    from { opacity: 0; transform: translateY(5px); }
+    to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ================================
-   Badge Animation
-   ================================ */
+/* Badge Animation */
 .m-badge {
     animation: mBadgeIn 0.3s ease-out;
 }
-
 @keyframes mBadgeIn {
-    from {
-        opacity: 0;
-        transform: translateY(-5px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
+    from { opacity: 0; transform: translateY(-5px); }
+    to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ================================
-   Empty State
-   ================================ */
+/* Empty State */
 .momentum-html-output:empty {
     min-height: 100px;
     display: flex;
@@ -137,28 +101,25 @@
     background: #f8f9fa;
 }
 
-/* ================================
-   Selection Highlight
-   ================================ */
+/* Selection Highlight */
 .elementor-editor-active .momentum-editable [contenteditable="true"]::selection {
     background: rgba(108, 99, 255, 0.2);
 }
 
-/* ================================
-   Responsive Images
-   ================================ */
+/* Responsive Images */
 .momentum-html-output img {
     max-width: 100%;
     height: auto;
 }
 
-/* ================================
-   Print
-   ================================ */
+/* Print - hide editor UI */
 @media print {
     .m-badge,
+    .m-img-bar,
     .m-img-controls,
     .m-resize-handle,
+    .m-resize-h,
+    .m-box-bar,
     #m-toolbar,
     #m-link-editor {
         display: none !important;
