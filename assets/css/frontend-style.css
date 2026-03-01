@@ -1,87 +1,46 @@
 /**
- * Momentum Pro Editor - Frontend Styles
- * Styles that appear on the live site (not editor)
+ * Momentum Pro Editor v2.0 - Frontend Styles
  */
 
-/* ================================
-   Main Output Container
-   ================================ */
+/* Main Container */
 .momentum-html-output {
     position: relative;
     width: 100%;
 }
 
-/* ================================
-   Responsive Images
-   ================================ */
+/* Responsive Images */
 .momentum-html-output img {
     max-width: 100%;
     height: auto;
 }
 
-/* ================================
-   Responsive Typography
-   ================================ */
-@media screen and (max-width: 1024px) {
-    .momentum-html-output h1 {
-        font-size: clamp(1.5rem, 4vw, 2.5rem);
-    }
-
-    .momentum-html-output h2 {
-        font-size: clamp(1.3rem, 3.5vw, 2rem);
-    }
-
-    .momentum-html-output h3 {
-        font-size: clamp(1.1rem, 3vw, 1.75rem);
-    }
-}
-
+/* Responsive Typography */
 @media screen and (max-width: 767px) {
-    .momentum-html-output h1 {
-        font-size: clamp(1.25rem, 5vw, 2rem);
-    }
-
-    .momentum-html-output h2 {
-        font-size: clamp(1.1rem, 4vw, 1.5rem);
-    }
-
-    .momentum-html-output h3 {
-        font-size: clamp(1rem, 3.5vw, 1.25rem);
-    }
-
+    .momentum-html-output h1 { font-size: clamp(1.25rem, 5vw, 2rem); }
+    .momentum-html-output h2 { font-size: clamp(1.1rem, 4vw, 1.5rem); }
+    .momentum-html-output h3 { font-size: clamp(1rem, 3.5vw, 1.25rem); }
     .momentum-html-output p,
     .momentum-html-output span,
-    .momentum-html-output li,
-    .momentum-html-output label {
-        font-size: clamp(0.875rem, 3vw, 1rem);
-    }
+    .momentum-html-output li { font-size: clamp(0.875rem, 3vw, 1rem); }
 }
 
-/* ================================
-   Responsive Tables
-   ================================ */
+/* Responsive Tables */
 @media screen and (max-width: 767px) {
     .momentum-html-output table {
         display: block;
         overflow-x: auto;
         -webkit-overflow-scrolling: touch;
-        width: 100%;
     }
 }
 
-/* ================================
-   Responsive Iframes & Videos
-   ================================ */
+/* Responsive Media */
 .momentum-html-output iframe,
 .momentum-html-output video,
-.momentum-html-output embed,
-.momentum-html-output object {
+.momentum-html-output embed {
     max-width: 100%;
 }
 
-/* ================================
-   Link Styles
-   ================================ */
+/* Links */
 .momentum-html-output a {
     transition: opacity 0.2s ease;
 }
@@ -90,19 +49,11 @@
     opacity: 0.85;
 }
 
-/* ================================
-   Print Styles
-   ================================ */
+/* Print */
 @media print {
     .momentum-html-output {
         padding: 0 !important;
         margin: 0 !important;
         background: none !important;
-    }
-
-    .momentum-html-output a[href]::after {
-        content: " (" attr(href) ")";
-        font-size: 0.8em;
-        color: #666;
     }
 }
