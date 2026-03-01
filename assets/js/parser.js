@@ -2,316 +2,288 @@
     'use strict';
 
     /**
-     * Momentum Pro Editor - Preview Parser
-     * Handles live preview updates when controls change
+     * Momentum Pro Editor - Preview Inline Editor
+     * Handles inline editing directly in the Elementor preview
      */
-    var MomentumParser = {
+    var MomentumPreview = {
 
         init: function() {
-            this.bindEvents();
-            console.log('Momentum Parser: Ready');
+            this.setupInlineEditing();
+            this.watchForNewWidgets();
+            console.log('Momentum Preview: Inline editing active');
         },
 
-        bindEvents: function() {
-            // Listen for Elementor widget changes in preview
-            $(document).on('momentum_update_preview', function(e, data) {
-                MomentumParser.updatePreview(data);
+        // ============================================
+        // Setup inline editing for all momentum widgets
+        // ============================================
+        setupInlineEditing: function() {
+            var self = this;
+
+            $('.momentum-html-output').each(function() {
+                var $output = $(this);
+
+                if ($output.data('momentum-preview-init')) return;
+                $output.data('momentum-preview-init', true);
+
+                // Only in editor mode
+                if (!$('body').hasClass('elementor-editor-active')) return;
+
+                // ---- Text Elements ----
+                var textSelectors = 'h1, h2, h3, h4, h5, h6, p, span, a, li, td, th, label, button, strong, em, b, i, small, blockquote';
+
+                $output.find(textSelectors).each(function() {
+                    var $el = $(this);
+
+                    // Check for direct text
+                    var hasDirectText = false;
+                    this.childNodes.forEach(function(node) {
+                        if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() !== '') {
+                            hasDirectText = true;
+                        }
+                    });
+
+                    if (!hasDirectText && $el.children().length > 0) return;
+
+                    // Make contenteditable
+                    $el.attr('contenteditable', 'true');
+                    $el.css({
+                        'cursor': 'text',
+                        'outline': 'none'
+                    });
+
+                    // Hover effect
+                    $el.on('mouseenter', function() {
+                        if (!$(this).is(':focus')) {
+                            $(this).css({
+                                'outline': '2px dashed rgba(108, 99, 255, 0.4)',
+                                'outline-offset': '2px'
+                            });
+                        }
+                    });
+
+                    $el.on('mouseleave', function() {
+                        if (!$(this).is(':focus')) {
+                            $(this).css({
+                                'outline': 'none'
+                            });
+                        }
+                    });
+
+                    // Focus effect
+                    $el.on('focus', function() {
+                        $(this).css({
+                            'outline': '2px solid #6C63FF',
+                            'outline-offset': '3px',
+                            'background-color': 'rgba(108, 99, 255, 0.03)'
+                        });
+
+                        // Show element tag label
+                        self.showElementLabel($(this));
+                    });
+
+                    $el.on('blur', function() {
+                        $(this).css({
+                            'outline': 'none',
+                            'background-color': ''
+                        });
+                        self.hideElementLabel();
+
+                        // Notify parent frame about the change
+                        self.notifyParentOfChange($output);
+                    });
+
+                    // Prevent default link behavior
+                    if ($el.is('a')) {
+                        $el.on('click', function(e) {
+                            e.preventDefault();
+                        });
+                    }
+                });
+
+                // ---- Images ----
+                $output.find('img').each(function() {
+                    var $img = $(this);
+
+                    $img.css('cursor', 'pointer');
+
+                    $img.on('mouseenter', function() {
+                        $(this).css({
+                            'outline': '2px dashed rgba(76, 175, 80, 0.5)',
+                            'outline-offset': '3px'
+                        });
+
+                        // Show change overlay
+                        self.showImageOverlay($(this));
+                    });
+
+                    $img.on('mouseleave', function() {
+                        $(this).css({
+                            'outline': 'none'
+                        });
+
+                        self.hideImageOverlay($(this));
+                    });
+                });
             });
         },
 
-        /**
-         * Parse HTML string and return structured data
-         */
-        parseHTML: function(htmlString) {
-            var result = {
-                texts: [],
-                images: [],
-                links: [],
-                containers: []
+        // ============================================
+        // Show element tag label
+        // ============================================
+        showElementLabel: function($el) {
+            this.hideElementLabel();
+
+            var tag = $el.prop('tagName').toLowerCase();
+            var tagLabels = {
+                'h1': 'عنوان رئيسي H1',
+                'h2': 'عنوان H2',
+                'h3': 'عنوان H3',
+                'h4': 'عنوان H4',
+                'h5': 'عنوان H5',
+                'h6': 'عنوان H6',
+                'p': 'فقرة',
+                'span': 'نص',
+                'a': 'رابط',
+                'li': 'عنصر قائمة',
+                'label': 'تسمية',
+                'button': 'زر',
+                'strong': 'نص عريض',
+                'em': 'نص مائل',
+                'blockquote': 'اقتباس',
+                'small': 'نص صغير'
             };
 
-            if (!htmlString || htmlString.trim() === '') {
-                return result;
-            }
+            var label = tagLabels[tag] || tag;
+            var offset = $el.offset();
 
-            var parser = new DOMParser();
-            var doc = parser.parseFromString(htmlString, 'text/html');
+            var $label = $('<div id="momentum-el-label" style="position:absolute;z-index:99999;background:#6C63FF;color:#fff;font-size:11px;padding:3px 10px;border-radius:3px;font-family:sans-serif;pointer-events:none;white-space:nowrap;">' + label + ' ✏️</div>');
 
-            // Parse text elements
-            var textTags = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'span', 'a', 'li', 'td', 'th', 'label', 'button', 'strong', 'em', 'b', 'i', 'small', 'blockquote'];
-            var textIndex = 0;
-
-            textTags.forEach(function(tag) {
-                var elements = doc.querySelectorAll(tag);
-                elements.forEach(function(el, idx) {
-                    textIndex++;
-                    if (textIndex > 20) return;
-
-                    var textContent = MomentumParser.getDirectText(el);
-                    var styles = MomentumParser.extractStyles(el);
-
-                    result.texts.push({
-                        index: textIndex,
-                        tag: tag,
-                        tagIndex: idx,
-                        content: textContent,
-                        color: styles.color || '',
-                        fontSize: styles.fontSize || '',
-                        fontSizeUnit: styles.fontSizeUnit || 'px',
-                        fontWeight: styles.fontWeight || '',
-                        textAlign: styles.textAlign || '',
-                        className: el.className || '',
-                        id: el.id || ''
-                    });
-                });
+            $label.css({
+                top: (offset.top - 25) + 'px',
+                left: offset.left + 'px'
             });
 
-            // Parse images
-            var images = doc.querySelectorAll('img');
-            var imgIndex = 0;
-
-            images.forEach(function(img, idx) {
-                imgIndex++;
-                if (imgIndex > 10) return;
-
-                var styles = MomentumParser.extractStyles(img);
-
-                result.images.push({
-                    index: imgIndex,
-                    src: img.getAttribute('src') || '',
-                    alt: img.getAttribute('alt') || '',
-                    width: img.getAttribute('width') || styles.width || '',
-                    height: img.getAttribute('height') || styles.height || '',
-                    borderRadius: styles.borderRadius || '',
-                    className: img.className || '',
-                    id: img.id || ''
-                });
-            });
-
-            // Parse links
-            var links = doc.querySelectorAll('a');
-            links.forEach(function(link, idx) {
-                result.links.push({
-                    index: idx,
-                    href: link.getAttribute('href') || '',
-                    target: link.getAttribute('target') || '',
-                    text: link.textContent.trim()
-                });
-            });
-
-            // Parse containers (divs with classes or styles)
-            var containers = doc.querySelectorAll('div[class], div[style], section, article, header, footer, main, aside, nav');
-            containers.forEach(function(container, idx) {
-                var styles = MomentumParser.extractStyles(container);
-                result.containers.push({
-                    index: idx,
-                    tag: container.tagName.toLowerCase(),
-                    className: container.className || '',
-                    id: container.id || '',
-                    padding: styles.padding || '',
-                    margin: styles.margin || '',
-                    backgroundColor: styles.backgroundColor || ''
-                });
-            });
-
-            return result;
+            $('body').append($label);
         },
 
-        /**
-         * Get direct text content of an element (excluding child elements)
-         */
-        getDirectText: function(element) {
-            var text = '';
-            var childNodes = element.childNodes;
+        hideElementLabel: function() {
+            $('#momentum-el-label').remove();
+        },
 
-            for (var i = 0; i < childNodes.length; i++) {
-                if (childNodes[i].nodeType === Node.TEXT_NODE) {
-                    text += childNodes[i].textContent;
+        // ============================================
+        // Image overlay
+        // ============================================
+        showImageOverlay: function($img) {
+            if ($img.parent('.momentum-img-hover-wrap').length) return;
+
+            var $wrapper = $('<div class="momentum-img-hover-wrap" style="position:relative;display:inline-block;"></div>');
+            $img.wrap($wrapper);
+
+            var $overlay = $('<div class="momentum-img-hover-overlay" style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(108,99,255,0.25);display:flex;align-items:center;justify-content:center;pointer-events:none;border-radius:4px;"><span style="background:#6C63FF;color:#fff;padding:6px 14px;border-radius:16px;font-size:12px;font-family:sans-serif;">📷 اضغط لتغيير الصورة</span></div>');
+
+            $img.parent().append($overlay);
+        },
+
+        hideImageOverlay: function($img) {
+            var $wrapper = $img.parent('.momentum-img-hover-wrap');
+            if ($wrapper.length) {
+                $wrapper.find('.momentum-img-hover-overlay').remove();
+                $img.unwrap();
+            }
+        },
+
+        // ============================================
+        // Notify parent frame (Elementor editor)
+        // ============================================
+        notifyParentOfChange: function($output) {
+            try {
+                var widgetId = $output.data('widget-id');
+                var htmlContent = $output.html();
+
+                // Remove any style tags from content before saving
+                var $temp = $('<div>').html(htmlContent);
+                $temp.find('style').remove();
+                $temp.find('#momentum-el-label').remove();
+                $temp.find('.momentum-action-bar').remove();
+                $temp.find('.momentum-img-hover-overlay').remove();
+                $temp.find('[contenteditable]').removeAttr('contenteditable');
+
+                // Clean up inline styles added by editor
+                $temp.find('*').each(function() {
+                    var style = $(this).attr('style') || '';
+                    style = style.replace(/cursor\s*:\s*text\s*;?/g, '');
+                    style = style.replace(/outline\s*:\s*[^;]+;?/g, '');
+                    style = style.replace(/outline-offset\s*:\s*[^;]+;?/g, '');
+                    style = style.replace(/min-width\s*:\s*20px\s*;?/g, '');
+                    style = style.replace(/min-height\s*:\s*1em\s*;?/g, '');
+                    style = style.replace(/background-color\s*:\s*rgba\(108,\s*99,\s*255[^)]*\)\s*;?/g, '');
+                    style = style.trim().replace(/;+/g, ';').replace(/^;|;$/g, '');
+                    if (style) {
+                        $(this).attr('style', style);
+                    } else {
+                        $(this).removeAttr('style');
+                    }
+                });
+
+                var cleanHTML = $temp.html();
+
+                // Send to parent
+                if (window.parent && window.parent.MomentumInlineEditor) {
+                    window.parent.MomentumInlineEditor.saveToElementor(widgetId);
                 }
+            } catch(e) {
+                console.log('Momentum Preview: Error notifying parent', e);
             }
-
-            text = text.trim();
-
-            // If no direct text, get full text content
-            if (text === '') {
-                text = element.textContent.trim();
-            }
-
-            return text;
         },
 
-        /**
-         * Extract inline styles from an element
-         */
-        extractStyles: function(element) {
-            var styles = {};
-            var styleAttr = element.getAttribute('style') || '';
+        // ============================================
+        // Watch for dynamically added widgets
+        // ============================================
+        watchForNewWidgets: function() {
+            var self = this;
 
-            if (styleAttr === '') return styles;
-
-            // Color
-            var colorMatch = styleAttr.match(/(?:^|;)\s*color\s*:\s*([^;]+)/i);
-            if (colorMatch) {
-                styles.color = colorMatch[1].trim();
-            }
-
-            // Font size
-            var fontSizeMatch = styleAttr.match(/font-size\s*:\s*(\d+\.?\d*)(px|em|rem|%|vw|vh)/i);
-            if (fontSizeMatch) {
-                styles.fontSize = parseFloat(fontSizeMatch[1]);
-                styles.fontSizeUnit = fontSizeMatch[2];
-            }
-
-            // Font weight
-            var fontWeightMatch = styleAttr.match(/font-weight\s*:\s*([^;]+)/i);
-            if (fontWeightMatch) {
-                styles.fontWeight = fontWeightMatch[1].trim();
-            }
-
-            // Text align
-            var textAlignMatch = styleAttr.match(/text-align\s*:\s*([^;]+)/i);
-            if (textAlignMatch) {
-                styles.textAlign = textAlignMatch[1].trim();
-            }
-
-            // Background color
-            var bgMatch = styleAttr.match(/background-color\s*:\s*([^;]+)/i);
-            if (bgMatch) {
-                styles.backgroundColor = bgMatch[1].trim();
-            }
-
-            // Padding
-            var paddingMatch = styleAttr.match(/padding\s*:\s*([^;]+)/i);
-            if (paddingMatch) {
-                styles.padding = paddingMatch[1].trim();
-            }
-
-            // Margin
-            var marginMatch = styleAttr.match(/margin\s*:\s*([^;]+)/i);
-            if (marginMatch) {
-                styles.margin = marginMatch[1].trim();
-            }
-
-            // Width
-            var widthMatch = styleAttr.match(/(?:^|;)\s*width\s*:\s*(\d+\.?\d*)(px|%|em|rem|vw)/i);
-            if (widthMatch) {
-                styles.width = widthMatch[1] + widthMatch[2];
-            }
-
-            // Height
-            var heightMatch = styleAttr.match(/(?:^|;)\s*height\s*:\s*(\d+\.?\d*)(px|%|em|rem|vh)/i);
-            if (heightMatch) {
-                styles.height = heightMatch[1] + heightMatch[2];
-            }
-
-            // Border radius
-            var borderRadiusMatch = styleAttr.match(/border-radius\s*:\s*(\d+\.?\d*)(px|%)/i);
-            if (borderRadiusMatch) {
-                styles.borderRadius = borderRadiusMatch[1] + borderRadiusMatch[2];
-            }
-
-            return styles;
-        },
-
-        /**
-         * Apply modifications to HTML and return modified version
-         */
-        applyModifications: function(htmlString, modifications) {
-            if (!htmlString) return htmlString;
-
-            var parser = new DOMParser();
-            var doc = parser.parseFromString('<div id="momentum-root">' + htmlString + '</div>', 'text/html');
-            var root = doc.getElementById('momentum-root');
-
-            // Apply text modifications
-            if (modifications.texts) {
-                var textTags = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'span', 'a', 'li', 'td', 'th', 'label', 'button', 'strong', 'em', 'b', 'i', 'small', 'blockquote'];
-                var textCounter = 0;
-
-                textTags.forEach(function(tag) {
-                    var elements = root.querySelectorAll(tag);
-                    elements.forEach(function(el) {
-                        textCounter++;
-                        var mod = modifications.texts[textCounter];
-                        if (!mod) return;
-
-                        // Update text
-                        if (mod.content !== undefined && mod.content !== '') {
-                            var hasChildElements = false;
-                            for (var c = 0; c < el.childNodes.length; c++) {
-                                if (el.childNodes[c].nodeType === Node.ELEMENT_NODE) {
-                                    hasChildElements = true;
-                                    break;
-                                }
+            // MutationObserver for new widgets
+            var observer = new MutationObserver(function(mutations) {
+                var shouldSetup = false;
+                mutations.forEach(function(mutation) {
+                    if (mutation.addedNodes.length) {
+                        $(mutation.addedNodes).each(function() {
+                            if ($(this).find('.momentum-html-output').length || $(this).hasClass('momentum-html-output')) {
+                                shouldSetup = true;
                             }
-                            if (!hasChildElements) {
-                                el.textContent = mod.content;
-                            }
-                        }
-
-                        // Update color
-                        if (mod.color) {
-                            el.style.color = mod.color;
-                        }
-
-                        // Update font size
-                        if (mod.fontSize) {
-                            el.style.fontSize = mod.fontSize + (mod.fontSizeUnit || 'px');
-                        }
-                    });
-                });
-            }
-
-            // Apply image modifications
-            if (modifications.images) {
-                var images = root.querySelectorAll('img');
-                var imgCounter = 0;
-
-                images.forEach(function(img) {
-                    imgCounter++;
-                    var mod = modifications.images[imgCounter];
-                    if (!mod) return;
-
-                    if (mod.src) {
-                        img.setAttribute('src', mod.src);
-                    }
-                    if (mod.width) {
-                        img.style.width = mod.width;
-                    }
-                    if (mod.height) {
-                        img.style.height = mod.height;
-                    }
-                    if (mod.borderRadius) {
-                        img.style.borderRadius = mod.borderRadius;
+                        });
                     }
                 });
-            }
 
-            return root.innerHTML;
-        },
+                if (shouldSetup) {
+                    setTimeout(function() {
+                        self.setupInlineEditing();
+                    }, 500);
+                }
+            });
 
-        /**
-         * Update preview in Elementor
-         */
-        updatePreview: function(data) {
-            var $widget = $('.elementor-widget-momentum_html_pro');
-            if ($widget.length === 0) return;
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
 
-            var $output = $widget.find('.momentum-html-output');
-            if ($output.length === 0) return;
-
-            if (data.html) {
-                $output.html(data.html);
-            }
+            // Also re-check periodically
+            setInterval(function() {
+                self.setupInlineEditing();
+            }, 3000);
         }
     };
 
-    // Initialize when document is ready
+    // ============================================
+    // Initialize
+    // ============================================
     $(document).ready(function() {
-        MomentumParser.init();
+        // Small delay to ensure everything is loaded
+        setTimeout(function() {
+            MomentumPreview.init();
+        }, 1000);
     });
 
-    // Expose globally for other scripts
-    window.MomentumParser = MomentumParser;
+    window.MomentumPreview = MomentumPreview;
 
 })(jQuery);
