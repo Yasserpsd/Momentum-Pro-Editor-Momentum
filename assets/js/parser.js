@@ -7,6 +7,7 @@
         histIdx: {},
         maxH: 50,
         ready: false,
+        setupRunning: false,
 
         init: function() {
             if (this.ready) return;
@@ -23,7 +24,7 @@
             this.setup();
             this.watch();
             this.listenReset();
-            console.log('[Momentum] Parser: Active');
+            console.log('[Momentum] Parser: Active v2.2');
         },
 
         listenReset: function() {
@@ -46,36 +47,60 @@
         },
 
         setup: function() {
+            if (this.setupRunning) return;
+            this.setupRunning = true;
+
             var self = this;
-            $('.momentum-html-output.momentum-editable').each(function() {
-                var $w = $(this);
-                if ($w.data('m3')) return;
-                $w.data('m3', true);
 
-                var wid = $w.data('widget-id');
-                if (!wid) {
-                    console.warn('[Momentum] Widget has no ID');
-                    return;
-                }
+            try {
+                $('.momentum-html-output.momentum-editable').each(function() {
+                    var $w = $(this);
+                    if ($w.data('m3')) return;
+                    $w.data('m3', true);
 
-                console.log('[Momentum] Setting up widget:', wid);
+                    var wid = $w.data('widget-id');
+                    if (!wid) {
+                        console.warn('[Momentum] Widget has no ID');
+                        return;
+                    }
 
-                if (!self.mods[wid]) {
-                    self.mods[wid] = { texts: {}, images: {}, links: {}, boxes: {} };
-                }
+                    console.log('[Momentum] Setting up widget:', wid);
 
-                if (!self.history[wid]) {
-                    self.history[wid] = [];
-                    self.histIdx[wid] = -1;
-                }
+                    // Load saved mods from data attribute if available
+                    if (!self.mods[wid]) {
+                        var savedMods = $w.attr('data-mods');
+                        if (savedMods && savedMods !== '{}') {
+                            try {
+                                self.mods[wid] = JSON.parse(savedMods);
+                                // تأكد إن كل الـ keys موجودة
+                                if (!self.mods[wid].texts) self.mods[wid].texts = {};
+                                if (!self.mods[wid].images) self.mods[wid].images = {};
+                                if (!self.mods[wid].links) self.mods[wid].links = {};
+                                if (!self.mods[wid].boxes) self.mods[wid].boxes = {};
+                                console.log('[Momentum] Loaded saved mods for:', wid);
+                            } catch(e) {
+                                self.mods[wid] = { texts: {}, images: {}, links: {}, boxes: {} };
+                            }
+                        } else {
+                            self.mods[wid] = { texts: {}, images: {}, links: {}, boxes: {} };
+                        }
+                    }
 
-                self.scanTexts($w, wid);
-                self.scanImages($w, wid);
-                self.scanLinks($w, wid);
-                self.scanBoxes($w, wid);
-                self.setupKeys(wid);
-                self.addBadge($w);
-            });
+                    if (!self.history[wid]) {
+                        self.history[wid] = [];
+                        self.histIdx[wid] = -1;
+                    }
+
+                    self.scanTexts($w, wid);
+                    self.scanImages($w, wid);
+                    self.scanLinks($w, wid);
+                    self.scanBoxes($w, wid);
+                    self.setupKeys(wid);
+                    self.addBadge($w);
+                });
+            } finally {
+                self.setupRunning = false;
+            }
         },
 
         // ============================================
@@ -142,11 +167,11 @@
                 $el.on('blur.m', function() {
                     $(this).css('outline', 'none');
                     self.saveText($(this), wid);
-                    setTimeout(function() { self.maybeHide(); }, 300);
+                    setTimeout(function() { self.maybeHide(); }, 400);
                 });
 
                 $el.on('input.m', function() {
-                    self.saveText($(this), wid);
+                    self.debounceSaveText($(this), wid);
                 });
             });
         },
@@ -172,8 +197,21 @@
             return false;
         },
 
+        // Debounced text save to avoid hammering
+        _saveTextTimer: null,
+        debounceSaveText: function($el, wid) {
+            var self = this;
+            if (self._saveTextTimer) clearTimeout(self._saveTextTimer);
+            self._saveTextTimer = setTimeout(function() {
+                self.saveText($el, wid);
+            }, 300);
+        },
+
         saveText: function($el, wid) {
             var key = this.getKey($el, wid);
+            if (!key) return;
+
+            if (!this.mods[wid]) this.mods[wid] = { texts: {}, images: {}, links: {}, boxes: {} };
             if (!this.mods[wid].texts) this.mods[wid].texts = {};
             if (!this.mods[wid].texts[key]) this.mods[wid].texts[key] = {};
 
@@ -313,7 +351,7 @@
         },
 
         // ============================================
-        // LINK POPUP
+        // LINK POPUP - FIXED
         // ============================================
         showLinkPopup: function($el, wid) {
             var self = this;
@@ -337,8 +375,8 @@
 
             $ed.html(
                 '<div style="color:#6C63FF;font-weight:700;font-size:14px;margin-bottom:12px;">\uD83D\uDD17 Link Editor</div>' +
-                '<label style="color:#aaa;font-size:11px;display:block;margin-bottom:10px;">URL<input type="url" id="ml-url" value="' + href + '" placeholder="https://example.com" style="' + is + '"></label>' +
-                '<label style="color:#aaa;font-size:11px;display:block;margin-bottom:10px;">Text<input type="text" id="ml-txt" value="' + txt.replace(/"/g, '&quot;') + '" style="' + is + '"></label>' +
+                '<label style="color:#aaa;font-size:11px;display:block;margin-bottom:10px;">URL<input type="url" id="ml-url" value="' + self.escAttr(href) + '" placeholder="https://example.com" style="' + is + '"></label>' +
+                '<label style="color:#aaa;font-size:11px;display:block;margin-bottom:10px;">Text<input type="text" id="ml-txt" value="' + self.escAttr(txt) + '" style="' + is + '"></label>' +
                 '<label style="color:#aaa;font-size:11px;display:flex;align-items:center;gap:8px;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="ml-blank" ' + (blank ? 'checked' : '') + '> Open in new tab</label>' +
                 '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
                 '<button id="ml-x" style="padding:7px 14px;border:none;border-radius:6px;background:#333;color:#fff;cursor:pointer;">Cancel</button>' +
@@ -350,45 +388,116 @@
             $('body').append($ed);
             $ed.find('#ml-url').focus();
 
+            // ✅ SAVE LINK - Fixed to actually persist link data
             $ed.find('#ml-ok').on('click', function() {
-                var url = $ed.find('#ml-url').val();
-                var t   = $ed.find('#ml-txt').val();
+                var url = $ed.find('#ml-url').val().trim();
+                var t   = $ed.find('#ml-txt').val().trim();
                 var bl  = $ed.find('#ml-blank').is(':checked');
 
                 if (!url) { alert('Please enter a URL'); return; }
 
                 if ($el.is('a')) {
+                    // Update DOM
                     $el.attr('href', url);
-                    if (t) $el.text(t);
+                    if (t) {
+                        // Only update text if no child elements
+                        var hasChildEls = false;
+                        $el.children().each(function() {
+                            if (this.nodeType === 1) { hasChildEls = true; return false; }
+                        });
+                        if (!hasChildEls) {
+                            $el.text(t);
+                        }
+                    }
                     if (bl) {
                         $el.attr('target', '_blank').attr('rel', 'noopener noreferrer');
                     } else {
                         $el.removeAttr('target').removeAttr('rel');
                     }
+
+                    // ✅ Save link data in mods.links
+                    if (!self.mods[wid].links) self.mods[wid].links = {};
+                    var $w = $el.closest('.momentum-html-output');
+                    var linkIndex = $w.find('a').index($el);
+                    if (linkIndex >= 0) {
+                        var linkKey = 'a:' + linkIndex;
+                        self.mods[wid].links[linkKey] = {
+                            href: url,
+                            text: t || $el.text().trim(),
+                            target: bl ? '_blank' : '_self'
+                        };
+                    }
+
+                    // ✅ Also update text mod if exists
+                    var textKey = self.getKey($el, wid);
+                    if (textKey && self.mods[wid].texts && self.mods[wid].texts[textKey]) {
+                        self.mods[wid].texts[textKey].text = t || $el.text().trim();
+                    }
+
                 } else {
+                    // Wrap text in an <a> tag
                     var $a = $('<a>').attr('href', url).text(t || $el.text());
                     $a.css({ color: $el.css('color'), textDecoration: 'underline' });
                     if (bl) $a.attr('target', '_blank').attr('rel', 'noopener noreferrer');
                     $el.empty().append($a);
+
+                    // Re-scan links so the new <a> gets events
+                    var $w2 = $el.closest('.momentum-html-output');
+                    self.scanLinks($w2, wid);
                 }
 
                 self.pushH(wid);
                 self.save(wid);
                 $ed.remove();
-                self.notify('Link saved');
+                self.notify('Link saved ✅');
             });
 
+            // ✅ REMOVE LINK - Fixed
             if ($el.is('a')) {
                 $ed.find('#ml-del').on('click', function() {
                     var t2 = $el.text();
+
+                    // Remove from mods.links
+                    if (self.mods[wid].links) {
+                        var $w = $el.closest('.momentum-html-output');
+                        var linkIndex = $w.find('a').index($el);
+                        if (linkIndex >= 0) {
+                            var linkKey = 'a:' + linkIndex;
+                            delete self.mods[wid].links[linkKey];
+                        }
+                    }
+
+                    // Remove from mods.texts
+                    var textKey = self.getKey($el, wid);
+                    if (textKey && self.mods[wid].texts) {
+                        delete self.mods[wid].texts[textKey];
+                    }
+
                     $el.replaceWith(t2);
                     self.pushH(wid);
                     self.save(wid);
                     $ed.remove();
+                    self.notify('Link removed');
                 });
             }
 
             $ed.find('#ml-x').on('click', function() { $ed.remove(); });
+
+            // Close on click outside
+            setTimeout(function() {
+                $(document).on('click.mlinked', function(e) {
+                    if (!$(e.target).closest('#m-link-editor').length) {
+                        $ed.remove();
+                        $(document).off('click.mlinked');
+                    }
+                });
+            }, 100);
+        },
+
+        // Escape HTML attribute value
+        escAttr: function(str) {
+            if (!str) return '';
+            return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         },
 
         scanLinks: function($w, wid) {
@@ -495,6 +604,7 @@
                     var $w2 = $clone.closest('.momentum-html-output');
                     self.scanTexts($w2, wid);
                     self.scanImages($w2, wid);
+                    self.scanLinks($w2, wid);
                     self.scanBoxes($w2, wid);
                 }, 100);
                 self.pushH(wid); self.save(wid);
@@ -648,7 +758,10 @@
         },
 
         saveImg: function($img, wid) {
-            var idx = $img.data('m-idx') || 0;
+            var idx = $img.data('m-idx');
+            if (typeof idx === 'undefined') idx = 0;
+
+            if (!this.mods[wid]) this.mods[wid] = { texts: {}, images: {}, links: {}, boxes: {} };
             if (!this.mods[wid].images) this.mods[wid].images = {};
             this.mods[wid].images[idx] = {
                 src: $img.attr('src'),
@@ -705,14 +818,32 @@
             var cur     = self.toHex($el.css(prop));
             var isTrans = ($el.css(prop) === 'rgba(0, 0, 0, 0)' || $el.css(prop) === 'transparent');
 
-            return $('<input type="color">').val(isTrans ? '#ffffff' : (cur || '#333333')).css({
+            var $input = $('<input type="color">').val(isTrans ? '#ffffff' : (cur || '#333333')).css({
                 width: '28px', height: '28px', border: '2px solid #444',
                 borderRadius: '6px', cursor: 'pointer', padding: '0', background: 'none', flexShrink: 0
-            }).attr('title', title).on('input', function() {
+            }).attr('title', title);
+
+            // ✅ FIX: Use both input and change events, with debounce
+            var colorTimer = null;
+            $input.on('input change', function() {
+                var val = $(this).val();
                 var camelProp = prop.replace(/-([a-z])/g, function(m, c) { return c.toUpperCase(); });
-                $el.css(prop, $(this).val());
-                self.saveSty($el, wid, camelProp, $(this).val());
+                $el.css(prop, val);
+
+                if (colorTimer) clearTimeout(colorTimer);
+                colorTimer = setTimeout(function() {
+                    self.saveSty($el, wid, camelProp, val);
+                }, 200);
             });
+
+            // ✅ FIX: Prevent toolbar from hiding when color picker is open
+            $input.on('focus', function() {
+                $input.data('m-color-active', true);
+            }).on('blur', function() {
+                $input.removeData('m-color-active');
+            });
+
+            return $input;
         },
 
         isBold: function($el) {
@@ -722,6 +853,9 @@
 
         saveSty: function($el, wid, prop, val) {
             var key = this.getKey($el, wid);
+            if (!key) return;
+
+            if (!this.mods[wid]) this.mods[wid] = { texts: {}, images: {}, links: {}, boxes: {} };
             if (!this.mods[wid].texts) this.mods[wid].texts = {};
             if (!this.mods[wid].texts[key]) this.mods[wid].texts[key] = {};
             this.mods[wid].texts[key][prop] = val;
@@ -732,7 +866,12 @@
         getKey: function($el, wid) {
             var tag = ($el.prop('tagName') || 'div').toLowerCase();
             var $w  = $el.closest('.momentum-html-output');
-            return tag + ':' + $w.find(tag).index($el);
+            var idx = $w.find(tag).index($el);
+
+            // ✅ FIX: لو العنصر مش موجود أو اتمسح
+            if (idx < 0) return null;
+
+            return tag + ':' + idx;
         },
 
         toHex: function(rgb) {
@@ -747,6 +886,14 @@
             var $f = $(':focus');
             if ($f.closest('#m-toolbar, #m-link-editor').length) return;
             if ($f.attr('contenteditable') === 'true') return;
+
+            // ✅ FIX: Don't hide if color picker is active
+            if ($f.is('input[type="color"]')) return;
+            if ($('#m-toolbar').find('input[type="color"]').data('m-color-active')) return;
+
+            // ✅ FIX: Don't hide if link editor is open
+            if ($('#m-link-editor').length > 0) return;
+
             this.hideAll();
         },
 
@@ -771,7 +918,11 @@
         },
 
         activeWid: function() {
-            var $w = $('.momentum-html-output').first();
+            // ✅ FIX: Try to find the focused widget first
+            var $focused = $(':focus').closest('.momentum-html-output');
+            if ($focused.length) return $focused.data('widget-id');
+
+            var $w = $('.momentum-html-output.momentum-editable').first();
             return $w.length ? $w.data('widget-id') : null;
         },
 
@@ -779,6 +930,7 @@
         // HISTORY
         // ============================================
         pushH: function(wid) {
+            if (!this.mods[wid]) return;
             if (!this.history[wid]) { this.history[wid] = []; this.histIdx[wid] = -1; }
             var i = this.histIdx[wid];
             if (i < this.history[wid].length - 1) this.history[wid] = this.history[wid].slice(0, i + 1);
@@ -792,7 +944,7 @@
             this.histIdx[wid]--;
             this.mods[wid] = JSON.parse(JSON.stringify(this.history[wid][this.histIdx[wid]]));
             this.save(wid);
-            this.notify('Undo');
+            this.notify('Undo ↩️');
         },
 
         redo: function(wid) {
@@ -800,7 +952,7 @@
             this.histIdx[wid]++;
             this.mods[wid] = JSON.parse(JSON.stringify(this.history[wid][this.histIdx[wid]]));
             this.save(wid);
-            this.notify('Redo');
+            this.notify('Redo ↪️');
         },
 
         // ============================================
@@ -808,12 +960,19 @@
         // ============================================
         save: function(wid) {
             try {
+                if (!this.mods[wid]) return;
+
                 var msg = {
                     type: 'momentum-save',
                     widgetId: wid,
                     modifications: this.mods[wid]
                 };
-                console.log('[Momentum] Sending save:', wid, Object.keys(this.mods[wid].texts).length, 'text mods');
+
+                var textCount = this.mods[wid].texts ? Object.keys(this.mods[wid].texts).length : 0;
+                var linkCount = this.mods[wid].links ? Object.keys(this.mods[wid].links).length : 0;
+                var imgCount  = this.mods[wid].images ? Object.keys(this.mods[wid].images).length : 0;
+
+                console.log('[Momentum] Saving:', wid, '| texts:', textCount, '| links:', linkCount, '| images:', imgCount);
                 window.parent.postMessage(msg, '*');
             } catch(e) {
                 console.error('[Momentum] Save postMessage error:', e);
@@ -824,11 +983,15 @@
         // NOTIFY
         // ============================================
         notify: function(msg) {
-            var $n = $('<div>').css({
+            // Remove existing notification
+            $('.m-notify').remove();
+
+            var $n = $('<div class="m-notify">').css({
                 position: 'fixed', bottom: '20px', left: '50%', transform: 'translateX(-50%)',
                 background: '#1a1a2e', color: '#fff', padding: '10px 24px', borderRadius: '10px',
                 fontSize: '13px', zIndex: 999999, boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
-                border: '1px solid rgba(108,99,255,0.3)'
+                border: '1px solid rgba(108,99,255,0.3)',
+                transition: 'opacity 0.3s'
             }).text(msg);
             $('body').append($n);
             setTimeout(function() { $n.fadeOut(300, function() { $n.remove(); }); }, 2000);
@@ -857,11 +1020,12 @@
         // ============================================
         watch: function() {
             var self = this;
+
             var observer = new MutationObserver(function(muts) {
                 var found = false;
                 muts.forEach(function(m) {
                     $(m.addedNodes).each(function() {
-                        if ($(this).hasClass('momentum-html-output') || $(this).find('.momentum-html-output').length) {
+                        if ($(this).hasClass && ($(this).hasClass('momentum-html-output') || $(this).find('.momentum-html-output').length)) {
                             found = true;
                         }
                     });
@@ -872,7 +1036,9 @@
             });
 
             observer.observe(document.body, { childList: true, subtree: true });
-            setInterval(function() { self.setup(); }, 3000);
+
+            // ✅ FIX: Reduced interval and added guard
+            setInterval(function() { self.setup(); }, 5000);
         }
     };
 
