@@ -56,6 +56,30 @@ class Momentum_HTML_Pro_Widget extends \Elementor\Widget_Base {
         );
 
         $this->add_control(
+            'sync_code_button',
+            [
+                'type' => \Elementor\Controls_Manager::RAW_HTML,
+                'raw'  => '<div style="margin-top:10px;">
+                    <button type="button" id="momentum-sync-btn" onclick="momentumSyncToCode()" style="background:linear-gradient(135deg,#4CAF50,#2E7D32);color:#fff;padding:12px 20px;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:700;width:100%;box-shadow:0 2px 10px rgba(76,175,80,0.3);transition:all 0.2s;">🔄 مزامنة التعديلات مع الكود</button>
+                    <p style="color:#888;font-size:11px;text-align:center;margin-top:6px;">بيحدّث الكود HTML بكل التغييرات اللي عملتها بصرياً</p>
+                </div>',
+            ]
+        );
+
+        $this->add_control(
+            'auto_sync',
+            [
+                'label'        => esc_html__( 'مزامنة تلقائية', 'momentum-pro-editor' ),
+                'type'         => \Elementor\Controls_Manager::SWITCHER,
+                'label_on'     => esc_html__( 'On', 'momentum-pro-editor' ),
+                'label_off'    => esc_html__( 'Off', 'momentum-pro-editor' ),
+                'return_value' => 'yes',
+                'default'      => '',
+                'description'  => esc_html__( 'لما تفعّلها، أي تعديل بيتحفظ في الكود تلقائياً', 'momentum-pro-editor' ),
+            ]
+        );
+
+        $this->add_control(
             'usage_guide',
             [
                 'type' => \Elementor\Controls_Manager::RAW_HTML,
@@ -63,9 +87,12 @@ class Momentum_HTML_Pro_Widget extends \Elementor\Widget_Base {
                     <strong style="font-size:14px;">💡 طريقة الاستخدام:</strong><br>
                     ✏️ اضغط على أي <strong>نص</strong> عشان تعدله مباشرة<br>
                     🎨 غيّر <strong>الألوان والخطوط</strong> من الـ Toolbar<br>
+                    📌 اضغط <strong>زرار الدبوس</strong> عشان الـ Toolbar يفضل مفتوح<br>
                     📷 اضغط على أي <strong>صورة</strong> عشان تغيرها<br>
                     🔗 اضغط مرتين على أي <strong>رابط</strong> عشان تعدله<br>
+                    🖱️ كليك يمين على أي <strong>Box</strong> لأدوات متقدمة<br>
                     ↩️ <strong>Ctrl+Z</strong> للتراجع | <strong>Ctrl+Y</strong> للإعادة<br>
+                    🔄 اضغط <strong>مزامنة</strong> عشان التعديلات تنعكس على الكود<br>
                     <small style="opacity:0.8;">كل التعديلات بتتحفظ تلقائياً ✅</small>
                 </div>',
             ]
@@ -200,13 +227,14 @@ class Momentum_HTML_Pro_Widget extends \Elementor\Widget_Base {
     }
 
     // ============================================
-    // RENDER (server-side - يشتغل دايماً)
+    // RENDER
     // ============================================
     protected function render() {
         $settings   = $this->get_settings_for_display();
         $html_code  = $settings['html_code'] ?? '';
         $custom_css = $settings['custom_css'] ?? '';
         $saved_mods = $settings['saved_modifications'] ?? '{}';
+        $auto_sync  = $settings['auto_sync'] ?? '';
         $widget_id  = $this->get_id();
         $is_editor  = \Elementor\Plugin::$instance->editor->is_edit_mode();
 
@@ -222,12 +250,12 @@ class Momentum_HTML_Pro_Widget extends \Elementor\Widget_Base {
         // Apply saved modifications to HTML
         $mods = json_decode( $saved_mods, true );
         if ( ! empty( $mods ) && is_array( $mods ) ) {
-            $html_code = $this->apply_mods( $html_code, $mods );
+            $html_code = $this->apply_mods_internal( $html_code, $mods );
         }
 
         $editor_class = $is_editor ? ' momentum-editable' : '';
 
-        echo '<div class="momentum-html-output' . $editor_class . '" data-widget-id="' . esc_attr( $widget_id ) . '" data-mods="' . esc_attr( $saved_mods ) . '">';
+        echo '<div class="momentum-html-output' . $editor_class . '" data-widget-id="' . esc_attr( $widget_id ) . '" data-mods="' . esc_attr( $saved_mods ) . '" data-auto-sync="' . esc_attr( $auto_sync ) . '" data-original-html="' . esc_attr( base64_encode( $settings['html_code'] ?? '' ) ) . '">';
 
         if ( ! empty( $custom_css ) ) {
             echo '<style>' . wp_strip_all_tags( $custom_css ) . '</style>';
@@ -237,10 +265,17 @@ class Momentum_HTML_Pro_Widget extends \Elementor\Widget_Base {
         echo '</div>';
     }
 
+    /**
+     * Public wrapper for AJAX
+     */
+    public function public_apply_mods( $html, $mods ) {
+        return $this->apply_mods_internal( $html, $mods );
+    }
+
     // ============================================
     // APPLY MODIFICATIONS SERVER-SIDE
     // ============================================
-    private function apply_mods( $html, $mods ) {
+    private function apply_mods_internal( $html, $mods ) {
         if ( empty( $mods ) ) return $html;
 
         $dom = new \DOMDocument();
@@ -309,6 +344,12 @@ class Momentum_HTML_Pro_Widget extends \Elementor\Widget_Base {
                             'letterSpacing'   => 'letter-spacing',
                             'backgroundColor' => 'background-color',
                             'padding'         => 'padding',
+                            'opacity'         => 'opacity',
+                            'textTransform'   => 'text-transform',
+                            'borderRadius'    => 'border-radius',
+                            'border'          => 'border',
+                            'margin'          => 'margin',
+                            'boxShadow'       => 'box-shadow',
                         ];
 
                         foreach ( $style_map as $js_prop => $css_prop ) {
@@ -366,6 +407,16 @@ class Momentum_HTML_Pro_Widget extends \Elementor\Widget_Base {
                         if ( isset( $data['borderRadius'] ) ) {
                             $style = preg_replace( '/border-radius\s*:[^;]+;?/', '', $style );
                             $style = rtrim( $style, '; ' ) . ';border-radius:' . intval( $data['borderRadius'] ) . 'px';
+                        }
+
+                        if ( isset( $data['opacity'] ) ) {
+                            $style = preg_replace( '/opacity\s*:[^;]+;?/', '', $style );
+                            $style = rtrim( $style, '; ' ) . ';opacity:' . floatval( $data['opacity'] );
+                        }
+
+                        if ( isset( $data['boxShadow'] ) ) {
+                            $style = preg_replace( '/box-shadow\s*:[^;]+;?/', '', $style );
+                            $style = rtrim( $style, '; ' ) . ';box-shadow:' . sanitize_text_field( $data['boxShadow'] );
                         }
 
                         $style = trim( $style, '; ' );
@@ -453,10 +504,4 @@ class Momentum_HTML_Pro_Widget extends \Elementor\Widget_Base {
 
         return $output ?: $html;
     }
-
-    // ============================================
-    // NO content_template = forces server render
-    // ده بيخلي Elementor يستخدم render() دايماً
-    // وبالتالي apply_mods بتشتغل صح
-    // ============================================
 }
