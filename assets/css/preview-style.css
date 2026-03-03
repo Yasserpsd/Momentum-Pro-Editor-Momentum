@@ -1,5 +1,5 @@
 /**
- * Momentum Pro Editor v2.2 - Preview Styles (Editor iframe)
+ * Momentum Pro Editor v3.0 - Preview Styles (Editor iframe)
  */
 
 /* Prevent contenteditable default outline flash */
@@ -37,4 +37,35 @@
 @keyframes mNotifyIn {
     from { opacity: 0; transform: translate(-50%, 10px); }
     to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* Toolbar rows */
+#m-toolbar {
+    animation: mToolbarIn 0.2s ease;
+}
+@keyframes mToolbarIn {
+    from { opacity: 0; transform: translateY(5px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Pin indicator glow */
+#m-toolbar .m-pin-btn[style*="rgb(108, 99, 255)"] {
+    box-shadow: 0 0 8px rgba(108, 99, 255, 0.6);
+}
+
+/* Hover hint for boxes */
+.momentum-editable div:hover,
+.momentum-editable section:hover,
+.momentum-editable article:hover {
+    cursor: default;
+}
+
+/* Image bar animation */
+.m-img-bar {
+    animation: mToolbarIn 0.2s ease;
+}
+
+/* Box bar animation */
+.m-box-bar {
+    animation: mToolbarIn 0.2s ease;
 }
