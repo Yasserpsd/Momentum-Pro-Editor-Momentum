@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Momentum Pro Editor
- * Description: Elementor widget that parses HTML code and provides visual controls for easy editing
- * Version: 2.2.0
+ * Description: Elementor widget that parses HTML code and provides visual controls for easy editing — with live code sync
+ * Version: 3.0.0
  * Author: Yasser Momentum
  * Author URI: https://momentummix.com/
  * License: GPL v3
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
-define( 'MOMENTUM_PRO_VERSION', '2.2.0' );
+define( 'MOMENTUM_PRO_VERSION', '3.0.0' );
 define( 'MOMENTUM_PRO_PATH', plugin_dir_path( __FILE__ ) );
 define( 'MOMENTUM_PRO_URL', plugin_dir_url( __FILE__ ) );
 
@@ -51,6 +51,9 @@ final class Momentum_Pro_Editor {
 
         // Frontend styles only
         add_action( 'elementor/frontend/after_enqueue_styles', [ $this, 'frontend_styles' ] );
+
+        // AJAX handler for code sync
+        add_action( 'wp_ajax_momentum_sync_code', [ $this, 'ajax_sync_code' ] );
     }
 
     public function admin_notice_missing_elementor() {
@@ -83,6 +86,10 @@ final class Momentum_Pro_Editor {
             MOMENTUM_PRO_VERSION,
             true
         );
+        wp_localize_script( 'momentum-editor-js', 'momentumAjax', [
+            'url'   => admin_url( 'admin-ajax.php' ),
+            'nonce' => wp_create_nonce( 'momentum_sync_nonce' ),
+        ] );
     }
 
     public function preview_scripts() {
@@ -111,6 +118,30 @@ final class Momentum_Pro_Editor {
             [],
             MOMENTUM_PRO_VERSION
         );
+    }
+
+    /**
+     * AJAX: Sync modifications back to HTML code
+     */
+    public function ajax_sync_code() {
+        check_ajax_referer( 'momentum_sync_nonce', 'nonce' );
+
+        if ( ! current_user_can( 'edit_posts' ) ) {
+            wp_send_json_error( 'No permission' );
+        }
+
+        $html = wp_unslash( $_POST['html'] ?? '' );
+        $mods = json_decode( wp_unslash( $_POST['mods'] ?? '{}' ), true );
+
+        if ( empty( $html ) || empty( $mods ) ) {
+            wp_send_json_error( 'Missing data' );
+        }
+
+        // Apply modifications to HTML using the same logic as render
+        $widget = new \Momentum_HTML_Pro_Widget();
+        $new_html = $widget->public_apply_mods( $html, $mods );
+
+        wp_send_json_success( [ 'html' => $new_html ] );
     }
 }
 
