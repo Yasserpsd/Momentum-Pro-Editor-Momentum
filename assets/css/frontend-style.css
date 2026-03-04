@@ -1,20 +1,17 @@
 /**
- * Momentum Pro Editor v3.0 - Frontend Styles
+ * Momentum Pro Editor v4.0 - Frontend Styles
  */
 
-/* Main Container */
 .momentum-html-output {
     position: relative;
     width: 100%;
 }
 
-/* Responsive Images */
 .momentum-html-output img {
     max-width: 100%;
     height: auto;
 }
 
-/* Responsive Typography */
 @media screen and (max-width: 767px) {
     .momentum-html-output h1 { font-size: clamp(1.25rem, 5vw, 2rem); }
     .momentum-html-output h2 { font-size: clamp(1.1rem, 4vw, 1.5rem); }
@@ -24,7 +21,6 @@
     .momentum-html-output li { font-size: clamp(0.875rem, 3vw, 1rem); }
 }
 
-/* Responsive Tables */
 @media screen and (max-width: 767px) {
     .momentum-html-output table {
         display: block;
@@ -33,22 +29,20 @@
     }
 }
 
-/* Responsive Media */
 .momentum-html-output iframe,
 .momentum-html-output video,
 .momentum-html-output embed {
     max-width: 100%;
 }
 
-/* Links */
 .momentum-html-output a {
     transition: opacity 0.2s ease;
 }
+
 .momentum-html-output a:hover {
     opacity: 0.85;
 }
 
-/* Print */
 @media print {
     .momentum-html-output {
         padding: 0 !important;
