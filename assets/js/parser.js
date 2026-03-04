@@ -1,14 +1,29 @@
 (function($) {
     'use strict';
 
+    // ============================================
+    // EDITOR-ONLY STYLE PROPERTIES
+    // These are the ONLY CSS properties we add during editing
+    // and the ONLY ones we remove during sync
+    // ============================================
+    var EDITOR_ONLY_STYLES = [
+        'outline',
+        'outline-offset',
+        '-webkit-tap-highlight-color'
+    ];
+
+    // cursor:text is the only cursor value we inject
+    var EDITOR_CURSOR_VALUE = 'text';
+
     var M = {
         ready: false,
         setupRunning: false,
         retryCount: 0,
         maxRetries: 30,
-        activeWidget: null,
         _observer: null,
         _rescanTimer: null,
+        _$toolbar: null,
+        _toolbarTarget: null,
 
         // ============================================
         // INITIALIZATION
@@ -28,7 +43,7 @@
             this.setup();
             this.watchDOM();
             this.listenMessages();
-            console.log('[Momentum] Parser: Active v4.0');
+            console.log('[Momentum] Parser: Active v4.1');
         },
 
         tryInit: function() {
@@ -54,7 +69,7 @@
 
                 switch (e.data.type) {
                     case 'momentum-get-html':
-                        self.sendHtmlToPanel(e.data.widgetId);
+                        self.sendCleanHtml(e.data.widgetId);
                         break;
                     case 'momentum-code-synced':
                         self.notify('✅ تم مزامنة الكود!');
@@ -67,57 +82,97 @@
         },
 
         /**
-         * Extract the live HTML from the widget and send it to the panel
+         * SAFE HTML EXTRACTION
+         * This is the critical function that was causing the bug.
+         * We now carefully preserve all user styles.
          */
-        sendHtmlToPanel: function(widgetId) {
+        sendCleanHtml: function(widgetId) {
             var $w = $('.momentum-html-output[data-widget-id="' + widgetId + '"]');
-            if (!$w.length) return;
+            if (!$w.length) {
+                console.warn('[Momentum] Widget not found for sync:', widgetId);
+                return;
+            }
 
-            // Clone the widget content
+            // Deep clone the widget
             var $clone = $w.clone();
 
-            // Remove editor artifacts
-            $clone.find('.m-badge').remove();
-            $clone.find('[contenteditable]').removeAttr('contenteditable');
-            $clone.find('*').each(function() {
-                // Remove data-m attributes
-                var attrs = this.attributes;
-                var toRemove = [];
-                for (var i = 0; i < attrs.length; i++) {
-                    if (attrs[i].name.indexOf('data-m-') === 0) {
-                        toRemove.push(attrs[i].name);
+            // 1. Remove editor UI elements (badges, toolbars, etc.)
+            $clone.find('.m-badge, #m-toolbar, #m-link-editor, .m-img-bar, .m-box-bar, .m-resize-h, .m-notify').remove();
+
+            // 2. Remove the custom CSS <style> tag (it's managed by Elementor control)
+            $clone.find('style.momentum-custom-css').remove();
+
+            // 3. Clean each element
+            $clone.find('*').addBack().each(function() {
+                var el = this;
+
+                // Remove contenteditable
+                el.removeAttribute('contenteditable');
+
+                // Remove data-m4-* and data-m-* attributes ONLY
+                var attrsToRemove = [];
+                for (var i = 0; i < el.attributes.length; i++) {
+                    var name = el.attributes[i].name;
+                    if (name.indexOf('data-m4-') === 0 ||
+                        name.indexOf('data-m-') === 0 ||
+                        name === 'data-m3' ||
+                        name === 'data-m4-init') {
+                        attrsToRemove.push(name);
                     }
                 }
-                for (var j = 0; j < toRemove.length; j++) {
-                    this.removeAttribute(toRemove[j]);
+                for (var j = 0; j < attrsToRemove.length; j++) {
+                    el.removeAttribute(attrsToRemove[j]);
                 }
 
-                // Clean up editor-only styles
-                var style = this.getAttribute('style');
+                // Clean ONLY editor-injected styles, preserve everything else
+                var style = el.getAttribute('style');
                 if (style) {
-                    style = style.replace(/outline\s*:[^;]*;?/gi, '');
-                    style = style.replace(/outline-offset\s*:[^;]*;?/gi, '');
-                    style = style.replace(/cursor\s*:\s*text\s*;?/gi, '');
-                    style = style.replace(/;\s*;/g, ';');
-                    style = style.replace(/^\s*;\s*/, '').replace(/\s*;\s*$/, '');
-                    if (style.trim()) {
-                        this.setAttribute('style', style.trim());
+                    var cleanStyle = this === $clone[0]
+                        ? '' // Remove all styles from the wrapper div itself
+                        : cleanEditorStyles(style);
+
+                    if (cleanStyle) {
+                        el.setAttribute('style', cleanStyle);
                     } else {
-                        this.removeAttribute('style');
+                        el.removeAttribute('style');
+                    }
+                }
+
+                // Remove momentum-editable and momentum-html-output classes
+                var classes = el.getAttribute('class');
+                if (classes) {
+                    classes = classes
+                        .replace(/\bmomentum-editable\b/g, '')
+                        .replace(/\bmomentum-html-output\b/g, '')
+                        .replace(/\s+/g, ' ')
+                        .trim();
+                    if (classes) {
+                        el.setAttribute('class', classes);
+                    } else {
+                        el.removeAttribute('class');
                     }
                 }
             });
 
+            // 4. Remove data-widget-id from the wrapper
+            $clone.removeAttr('data-widget-id');
+
+            // 5. Get the INNER HTML (not including the wrapper div)
             var html = $clone.html();
 
-            // Remove the <style> tag of custom CSS (it comes from Elementor control)
-            html = html.replace(/<style>[\s\S]*?<\/style>/gi, '').trim();
+            if (!html || !html.trim()) {
+                console.warn('[Momentum] Empty HTML after cleaning');
+                return;
+            }
 
+            // Send to panel for saving
             window.parent.postMessage({
                 type: 'momentum-request-sync',
                 widgetId: widgetId,
                 html: html
             }, '*');
+
+            console.log('[Momentum] Clean HTML sent, length:', html.length);
         },
 
         handleReset: function(widgetId) {
@@ -129,7 +184,7 @@
         },
 
         // ============================================
-        // DOM WATCHER (lightweight)
+        // DOM WATCHER
         // ============================================
         watchDOM: function() {
             var self = this;
@@ -218,9 +273,7 @@
         },
 
         // ============================================
-        // MAKE TEXT ELEMENTS EDITABLE
-        // Key change: use contenteditable on text elements
-        // and use Selection API for partial text styling
+        // MAKE TEXT EDITABLE
         // ============================================
         makeEditable: function($w, wid) {
             var self = this;
@@ -242,7 +295,6 @@
                 if ($el.data('m4-text')) return;
                 if (self.isIcon(el)) return;
 
-                // Check if element has direct text content
                 var hasText = false;
                 for (var i = 0; i < el.childNodes.length; i++) {
                     if (el.childNodes[i].nodeType === 3 && el.childNodes[i].textContent.trim().length > 0) {
@@ -256,12 +308,10 @@
                 $el.attr('contenteditable', 'true');
                 $el.css({ cursor: 'text', outline: 'none' });
 
-                // Prevent links from navigating
                 if (tag === 'a') {
                     $el.on('click.m4', function(e) { e.preventDefault(); });
                 }
 
-                // Hover effect
                 $el.on('mouseenter.m4', function(e) {
                     e.stopPropagation();
                     if (!$(this).is(':focus')) {
@@ -273,28 +323,20 @@
                     }
                 });
 
-                // Focus: show toolbar
                 $el.on('focus.m4', function(e) {
                     e.stopPropagation();
                     $(this).css({ outline: '2px solid #6C63FF', outlineOffset: '3px' });
-                    self.activeWidget = wid;
                     self.showToolbar($(this), wid);
                 });
 
-                // Blur: hide toolbar
                 $el.on('blur.m4', function() {
                     var $this = $(this);
                     $this.css('outline', 'none');
                     setTimeout(function() {
-                        if (!self.isToolbarActive()) {
+                        if (!self.isToolbarHovered()) {
                             self.hideToolbar();
                         }
-                    }, 300);
-                });
-
-                // Listen for selection changes to enable/disable toolbar buttons
-                $el.on('mouseup.m4 keyup.m4', function() {
-                    self.updateToolbarState();
+                    }, 250);
                 });
             });
         },
@@ -306,13 +348,6 @@
             if (tag === 'svg' || tag === 'i') {
                 if ($el.text().trim().length <= 1) return true;
             }
-            if ($el.find('svg').length > 0 && $el.children().length > 0) {
-                var t = '';
-                for (var i = 0; i < el.childNodes.length; i++) {
-                    if (el.childNodes[i].nodeType === 3) t += el.childNodes[i].textContent.trim();
-                }
-                if (t.length <= 2) return true;
-            }
 
             var cls = (el.className || '').toString();
             if (/\b(fa|fas|far|fab|fal|fad|dashicons|eicon|ti-|glyphicon|material-icons|icon)\b/i.test(cls)) return true;
@@ -321,34 +356,25 @@
         },
 
         // ============================================
-        // TOOLBAR (the main UI)
-        // Supports PARTIAL TEXT SELECTION styling
+        // TOOLBAR
         // ============================================
-        _$toolbar: null,
-        _toolbarTarget: null,
-        _toolbarWid: null,
-
-        isToolbarActive: function() {
-            return this._$toolbar && this._$toolbar.is(':visible') &&
-                   this._$toolbar.is(':hover, :focus-within');
+        isToolbarHovered: function() {
+            if (!this._$toolbar) return false;
+            return this._$toolbar.is(':hover') || this._$toolbar.find(':focus').length > 0;
         },
 
         showToolbar: function($el, wid) {
             var self = this;
-
-            // Remove old toolbar
             this.hideToolbar();
 
             this._toolbarTarget = $el;
-            this._toolbarWid = wid;
 
             var off = $el.offset();
-            var elH = $el.outerHeight();
 
             var $bar = $('<div id="m-toolbar">').css({
                 position: 'absolute',
                 zIndex: 999999,
-                top: Math.max(5, off.top - 90) + 'px',
+                top: Math.max(5, off.top - 94) + 'px',
                 left: Math.max(10, off.left) + 'px',
                 background: '#1a1a2e',
                 borderRadius: '12px',
@@ -356,119 +382,96 @@
                 boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
                 border: '1px solid rgba(108,99,255,0.3)',
                 fontFamily: 'sans-serif',
-                maxWidth: '620px'
+                maxWidth: '600px'
             }).on('mousedown', function(e) {
-                // Prevent toolbar click from stealing focus/selection
-                // BUT allow clicks on input elements (color pickers)
                 if (!$(e.target).is('input')) {
                     e.preventDefault();
                 }
             });
 
-            var s = function() { return self.createSep(); };
+            var s = function() { return self.sep(); };
 
-            // ===== ROW 1: Text formatting =====
+            // ===== ROW 1: Inline formatting =====
             var $row1 = $('<div>').css({ display: 'flex', gap: '3px', alignItems: 'center', flexWrap: 'wrap' });
 
-            // Bold
-            var $bold = this.createBtn('B', 'Bold (Ctrl+B)').css('fontWeight', 'bold');
-            $bold.on('mousedown', function(e) {
-                e.preventDefault();
-                self.applyInlineCommand('bold');
-                self.updateToolbarState();
-            });
+            var $bold = this.btn('B', 'Bold').css('fontWeight', 'bold');
+            $bold.on('mousedown', function(e) { e.preventDefault(); document.execCommand('bold'); });
 
-            // Italic
-            var $italic = this.createBtn('I', 'Italic (Ctrl+I)').css('fontStyle', 'italic');
-            $italic.on('mousedown', function(e) {
-                e.preventDefault();
-                self.applyInlineCommand('italic');
-                self.updateToolbarState();
-            });
+            var $italic = this.btn('I', 'Italic').css('fontStyle', 'italic');
+            $italic.on('mousedown', function(e) { e.preventDefault(); document.execCommand('italic'); });
 
-            // Underline
-            var $underline = this.createBtn('U', 'Underline (Ctrl+U)').css('textDecoration', 'underline');
-            $underline.on('mousedown', function(e) {
-                e.preventDefault();
-                self.applyInlineCommand('underline');
-                self.updateToolbarState();
-            });
+            var $underline = this.btn('U', 'Underline').css('textDecoration', 'underline');
+            $underline.on('mousedown', function(e) { e.preventDefault(); document.execCommand('underline'); });
 
-            // Strikethrough
-            var $strike = this.createBtn('S', 'Strikethrough').css('textDecoration', 'line-through');
-            $strike.on('mousedown', function(e) {
-                e.preventDefault();
-                self.applyInlineCommand('strikeThrough');
-                self.updateToolbarState();
-            });
+            var $strike = this.btn('S', 'Strikethrough').css('textDecoration', 'line-through');
+            $strike.on('mousedown', function(e) { e.preventDefault(); document.execCommand('strikeThrough'); });
 
-            // Text Color (for selection)
-            var currentColor = $el.css('color') || '#333333';
-            var $textColorLabel = $('<span>').css({ color: '#aaa', fontSize: '10px', marginRight: '2px' }).text('لون');
-            var $textColor = $('<input type="color">').val(self.rgbToHex(currentColor)).css({
+            // Text Color
+            var $tcLabel = $('<span>').css({ color: '#aaa', fontSize: '10px', marginRight: '2px' }).text('لون');
+            var $tc = $('<input type="color">').val(self.rgbToHex($el.css('color') || '#333')).css({
                 width: '28px', height: '24px', border: 'none', borderRadius: '4px',
                 cursor: 'pointer', background: 'transparent', padding: '0'
             });
-            $textColor.on('input', function() {
-                var color = $(this).val();
-                self.applyColorToSelection(color);
+            $tc.on('input', function() {
+                var c = $(this).val();
+                var sel = window.getSelection();
+                if (sel && sel.rangeCount > 0 && !sel.getRangeAt(0).collapsed) {
+                    document.execCommand('foreColor', false, c);
+                } else {
+                    $el.css('color', c);
+                }
             });
 
-            // Background Color (for selection)
-            var $bgColorLabel = $('<span>').css({ color: '#aaa', fontSize: '10px', marginRight: '2px' }).text('خلفية');
-            var $bgColor = $('<input type="color">').val('#ffff00').css({
+            // BG Color
+            var $bgLabel = $('<span>').css({ color: '#aaa', fontSize: '10px', marginRight: '2px' }).text('خلفية');
+            var $bg = $('<input type="color">').val('#ffff00').css({
                 width: '28px', height: '24px', border: 'none', borderRadius: '4px',
                 cursor: 'pointer', background: 'transparent', padding: '0'
             });
-            $bgColor.on('input', function() {
-                var color = $(this).val();
-                self.applyBgColorToSelection(color);
+            $bg.on('input', function() {
+                var c = $(this).val();
+                var sel = window.getSelection();
+                if (sel && sel.rangeCount > 0 && !sel.getRangeAt(0).collapsed) {
+                    document.execCommand('hiliteColor', false, c);
+                } else {
+                    $el.css('background-color', c);
+                }
             });
 
             // Remove Format
-            var $removeFormat = this.createBtn('✕', 'Remove Formatting');
-            $removeFormat.css({ color: '#e74c3c', fontSize: '12px' });
-            $removeFormat.on('mousedown', function(e) {
-                e.preventDefault();
-                self.applyInlineCommand('removeFormat');
-                self.updateToolbarState();
-            });
+            var $rf = this.btn('✕', 'إزالة التنسيق').css({ color: '#e74c3c' });
+            $rf.on('mousedown', function(e) { e.preventDefault(); document.execCommand('removeFormat'); });
 
-            $row1.append($bold, $italic, $underline, $strike, s(),
-                         $textColorLabel, $textColor, s(),
-                         $bgColorLabel, $bgColor, s(),
-                         $removeFormat);
+            $row1.append($bold, $italic, $underline, $strike, s(), $tcLabel, $tc, s(), $bgLabel, $bg, s(), $rf);
 
-            // ===== ROW 2: Block-level formatting =====
+            // ===== ROW 2: Block level =====
             var $row2 = $('<div>').css({
-                display: 'flex', gap: '3px', alignItems: 'center',
-                flexWrap: 'wrap', marginTop: '4px', paddingTop: '4px',
-                borderTop: '1px solid #333'
+                display: 'flex', gap: '3px', alignItems: 'center', flexWrap: 'wrap',
+                marginTop: '4px', paddingTop: '4px', borderTop: '1px solid #333'
             });
 
-            // Text Align
-            var $aR = this.createBtn('⇢', 'Align Right').attr('data-align', 'right');
-            var $aC = this.createBtn('⇔', 'Align Center').attr('data-align', 'center');
-            var $aL = this.createBtn('⇠', 'Align Left').attr('data-align', 'left');
-            var currentAlign = $el.css('text-align') || 'right';
-            [$aR, $aC, $aL].forEach(function($btn) {
-                if ($btn.attr('data-align') === currentAlign) {
-                    $btn.css('background', '#6C63FF');
-                }
-                $btn.on('mousedown', function(e) {
+            // Align
+            var align = $el.css('text-align') || 'right';
+            var $aR = this.btn('⇢', 'يمين', align === 'right' || align === 'start');
+            var $aC = this.btn('⇔', 'وسط', align === 'center');
+            var $aL = this.btn('⇠', 'يسار', align === 'left' || align === 'end');
+
+            [$aR, $aC, $aL].forEach(function($b, i) {
+                var val = ['right', 'center', 'left'][i];
+                $b.attr('data-al', val);
+                $b.on('mousedown', function(e) {
                     e.preventDefault();
-                    var a = $(this).attr('data-align');
-                    $el.css('text-align', a);
-                    [$aR, $aC, $aL].forEach(function(b) { b.css('background', '#2a2a3e'); });
+                    $el.css('text-align', val);
+                    [$aR, $aC, $aL].forEach(function(x) { x.css('background', '#2a2a3e'); });
                     $(this).css('background', '#6C63FF');
                 });
             });
 
-            // Font Size
+            // Font Size (whole element)
             var sz = parseInt($el.css('font-size')) || 16;
-            var $szD = this.createBtn('−', 'حجم أصغر');
-            var $szL = $('<span>').css({ color: '#fff', fontSize: '11px', minWidth: '36px', textAlign: 'center', userSelect: 'none', display: 'inline-block' }).text(sz + 'px');
-            var $szU = this.createBtn('+', 'حجم أكبر');
+            var $szD = this.btn('−', 'تصغير');
+            var $szL = $('<span>').css({ color: '#fff', fontSize: '11px', minWidth: '36px', textAlign: 'center', display: 'inline-block' }).text(sz + 'px');
+            var $szU = this.btn('+', 'تكبير');
 
             $szD.on('mousedown', function(e) {
                 e.preventDefault();
@@ -483,25 +486,19 @@
                 $szL.text(sz + 'px');
             });
 
-            // Font Size for Selection
-            var $szSelD = this.createBtn('A↓', 'تصغير النص المحدد');
-            var $szSelU = this.createBtn('A↑', 'تكبير النص المحدد');
+            // Selection font size
+            var $sszD = this.btn('A↓', 'تصغير المحدد');
+            var $sszU = this.btn('A↑', 'تكبير المحدد');
 
-            $szSelD.on('mousedown', function(e) {
-                e.preventDefault();
-                self.changeFontSizeSelection(-1);
-            });
-            $szSelU.on('mousedown', function(e) {
-                e.preventDefault();
-                self.changeFontSizeSelection(1);
-            });
+            $sszD.on('mousedown', function(e) { e.preventDefault(); self.changeSelFontSize(-2); });
+            $sszU.on('mousedown', function(e) { e.preventDefault(); self.changeSelFontSize(2); });
 
             // Line Height
             var lh = parseFloat($el.css('line-height')) / (parseInt($el.css('font-size')) || 16);
             lh = Math.round(lh * 10) / 10 || 1.5;
-            var $lhD = this.createBtn('↕−', 'تقليل ارتفاع السطر');
+            var $lhD = this.btn('↕−', 'تقليل');
             var $lhL = $('<span>').css({ color: '#aaa', fontSize: '10px', minWidth: '26px', textAlign: 'center', display: 'inline-block' }).text(lh.toFixed(1));
-            var $lhU = this.createBtn('↕+', 'زيادة ارتفاع السطر');
+            var $lhU = this.btn('↕+', 'زيادة');
 
             $lhD.on('mousedown', function(e) {
                 e.preventDefault();
@@ -516,23 +513,20 @@
                 $lhL.text(lh.toFixed(1));
             });
 
-            // Link button
-            var $link = this.createBtn('🔗', 'إضافة رابط');
+            // Link
+            var $link = this.btn('🔗', 'رابط');
             $link.on('mousedown', function(e) {
                 e.preventDefault();
-                self.wrapSelectionWithLink($el, wid);
+                self.addLinkToSelection($el, wid);
             });
 
-            $row2.append($aR, $aC, $aL, s(), $szD, $szL, $szU, s(), $szSelD, $szSelU, s(),
-                         $lhD, $lhL, $lhU, s(), $link);
+            $row2.append($aR, $aC, $aL, s(), $szD, $szL, $szU, s(), $sszD, $sszU, s(), $lhD, $lhL, $lhU, s(), $link);
 
             $bar.append($row1, $row2);
             $('body').append($bar);
 
             this._$toolbar = $bar;
-
-            // Adjust position if toolbar goes off screen
-            this.fixToolbarPosition($bar, off, $el);
+            this.fixBarPos($bar, off, $el);
         },
 
         hideToolbar: function() {
@@ -543,12 +537,7 @@
             this._toolbarTarget = null;
         },
 
-        updateToolbarState: function() {
-            // Could update active state of B/I/U buttons based on current selection
-            // This is a nice-to-have enhancement
-        },
-
-        fixToolbarPosition: function($bar, off, $el) {
+        fixBarPos: function($bar, off, $el) {
             var barW = $bar.outerWidth();
             var winW = $(window).width();
             var winScroll = $(window).scrollTop();
@@ -559,153 +548,64 @@
 
             var barTop = parseInt($bar.css('top'));
             if (barTop < winScroll + 5) {
-                // Place below the element instead
                 $bar.css('top', (off.top + $el.outerHeight() + 8) + 'px');
             }
         },
 
-        // ============================================
-        // INLINE STYLING COMMANDS
-        // These work on SELECTED TEXT only!
-        // ============================================
-
-        /**
-         * Apply a document.execCommand for inline formatting
-         */
-        applyInlineCommand: function(command) {
-            document.execCommand(command, false, null);
-        },
-
-        /**
-         * Apply text color to the current selection using execCommand
-         */
-        applyColorToSelection: function(color) {
+        changeSelFontSize: function(delta) {
             var sel = window.getSelection();
             if (!sel || sel.rangeCount === 0) return;
-
-            var range = sel.getRangeAt(0);
-            if (range.collapsed) {
-                // No selection - apply to the whole focused element
-                if (this._toolbarTarget) {
-                    this._toolbarTarget.css('color', color);
-                }
-                return;
-            }
-
-            // Use execCommand foreColor for selected text
-            document.execCommand('foreColor', false, color);
-        },
-
-        /**
-         * Apply background color to the current selection
-         */
-        applyBgColorToSelection: function(color) {
-            var sel = window.getSelection();
-            if (!sel || sel.rangeCount === 0) return;
-
-            var range = sel.getRangeAt(0);
-            if (range.collapsed) {
-                if (this._toolbarTarget) {
-                    this._toolbarTarget.css('background-color', color);
-                }
-                return;
-            }
-
-            document.execCommand('hiliteColor', false, color);
-        },
-
-        /**
-         * Change font size for the selected text
-         */
-        changeFontSizeSelection: function(delta) {
-            var sel = window.getSelection();
-            if (!sel || sel.rangeCount === 0) return;
-
             var range = sel.getRangeAt(0);
 
             if (range.collapsed) {
-                // No selection, change element font size
                 if (this._toolbarTarget) {
                     var sz = parseInt(this._toolbarTarget.css('font-size')) || 16;
-                    sz = Math.max(6, Math.min(200, sz + delta));
-                    this._toolbarTarget.css('font-size', sz + 'px');
+                    this._toolbarTarget.css('font-size', Math.max(6, Math.min(200, sz + delta)) + 'px');
                 }
                 return;
             }
 
-            // For selected text, wrap in a span with the new size
-            // First, use fontSize command (uses 1-7 scale, not ideal)
-            // Better approach: wrap selection in span manually
-            var selectedText = range.toString();
-            if (!selectedText) return;
-
-            // Get computed font size of the selection start
             var container = range.startContainer;
             if (container.nodeType === 3) container = container.parentNode;
             var currentSize = parseInt(window.getComputedStyle(container).fontSize) || 16;
             var newSize = Math.max(6, Math.min(200, currentSize + delta));
 
-            // Create a span with the new size
-            var span = document.createElement('span');
-            span.style.fontSize = newSize + 'px';
-
-            try {
-                range.surroundContents(span);
-                // Reselect
-                sel.removeAllRanges();
-                var newRange = document.createRange();
-                newRange.selectNodeContents(span);
-                sel.addRange(newRange);
-            } catch(e) {
-                // surroundContents fails if selection spans multiple nodes
-                // Fallback: use execCommand fontSize with a placeholder, then fix
-                document.execCommand('fontSize', false, '7');
-                // Find all font elements with size 7 and replace with span
-                if (this._toolbarTarget) {
-                    this._toolbarTarget.find('font[size="7"]').each(function() {
-                        var $font = $(this);
-                        var $span = $('<span>').css('font-size', newSize + 'px').html($font.html());
-                        $font.replaceWith($span);
-                    });
-                }
+            // Use fontSize command with placeholder, then replace
+            document.execCommand('fontSize', false, '7');
+            if (this._toolbarTarget) {
+                this._toolbarTarget.find('font[size="7"]').each(function() {
+                    var $span = $('<span>').css('font-size', newSize + 'px').html($(this).html());
+                    $(this).replaceWith($span);
+                });
             }
         },
 
-        /**
-         * Wrap the current selection with a link
-         */
-        wrapSelectionWithLink: function($el, wid) {
+        addLinkToSelection: function($el, wid) {
             var self = this;
-            var sel = window.getSelection();
-            var selectedText = sel ? sel.toString().trim() : '';
 
             if ($el.is('a')) {
-                // If element itself is a link, show link editor
                 self.showLinkPopup($el, wid);
                 return;
             }
 
-            if (!selectedText) {
-                self.notify('⚠️ حدد نص أولاً عشان تضيف رابط');
+            var sel = window.getSelection();
+            var text = sel ? sel.toString().trim() : '';
+
+            if (!text) {
+                self.notify('⚠️ حدد نص أولاً');
                 return;
             }
 
-            var url = prompt('أدخل الرابط (URL):', 'https://');
+            var url = prompt('أدخل الرابط:', 'https://');
             if (!url) return;
 
             document.execCommand('createLink', false, url);
-
-            // Find the newly created link and style it
-            $el.find('a[href="' + url + '"]').css({
-                color: '#6C63FF',
-                textDecoration: 'underline'
-            }).attr('target', '_blank').attr('rel', 'noopener noreferrer');
-
+            $el.find('a[href="' + url + '"]').attr('target', '_blank').attr('rel', 'noopener noreferrer');
             self.notify('🔗 تم إضافة الرابط!');
         },
 
         // ============================================
-        // LINK EDITING (double-click)
+        // LINKS
         // ============================================
         setupLinks: function($w, wid) {
             var self = this;
@@ -713,7 +613,6 @@
                 var $a = $(this);
                 if ($a.data('m4-link')) return;
                 $a.data('m4-link', true);
-
                 $a.on('dblclick.m4', function(e) {
                     e.preventDefault();
                     e.stopPropagation();
@@ -727,7 +626,7 @@
             $('#m-link-editor').remove();
 
             var off = $el.offset();
-            var inputStyle = 'width:100%;padding:8px 12px;border:1px solid #333;border-radius:6px;background:#2a2a3e;color:#fff;font-size:13px;margin-top:4px;box-sizing:border-box;outline:none;';
+            var is = 'width:100%;padding:8px 12px;border:1px solid #333;border-radius:6px;background:#2a2a3e;color:#fff;font-size:13px;margin-top:4px;box-sizing:border-box;outline:none;';
             var href = $el.is('a') ? ($el.attr('href') || '') : '';
             var txt = $el.text().trim();
             var blank = $el.is('a') ? ($el.attr('target') === '_blank') : true;
@@ -744,12 +643,12 @@
 
             $ed.html(
                 '<div style="color:#6C63FF;font-weight:700;font-size:14px;margin-bottom:12px;">🔗 تعديل الرابط</div>' +
-                '<label style="color:#aaa;font-size:11px;display:block;margin-bottom:10px;">URL<input type="url" id="ml-url" value="' + self.escAttr(href) + '" placeholder="https://example.com" style="' + inputStyle + '"></label>' +
-                '<label style="color:#aaa;font-size:11px;display:block;margin-bottom:10px;">النص<input type="text" id="ml-txt" value="' + self.escAttr(txt) + '" style="' + inputStyle + '"></label>' +
+                '<label style="color:#aaa;font-size:11px;display:block;margin-bottom:10px;">URL<input type="url" id="ml-url" value="' + self.escAttr(href) + '" placeholder="https://example.com" style="' + is + '"></label>' +
+                '<label style="color:#aaa;font-size:11px;display:block;margin-bottom:10px;">النص<input type="text" id="ml-txt" value="' + self.escAttr(txt) + '" style="' + is + '"></label>' +
                 '<label style="color:#aaa;font-size:11px;display:flex;align-items:center;gap:8px;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="ml-blank" ' + (blank ? 'checked' : '') + '> فتح في تاب جديد</label>' +
                 '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
                 '<button id="ml-x" style="padding:7px 14px;border:none;border-radius:6px;background:#333;color:#fff;cursor:pointer;">إلغاء</button>' +
-                ($el.is('a') ? '<button id="ml-del" style="padding:7px 14px;border:none;border-radius:6px;background:#e74c3c;color:#fff;cursor:pointer;">حذف الرابط</button>' : '') +
+                ($el.is('a') ? '<button id="ml-del" style="padding:7px 14px;border:none;border-radius:6px;background:#e74c3c;color:#fff;cursor:pointer;">حذف</button>' : '') +
                 '<button id="ml-ok" style="padding:7px 14px;border:none;border-radius:6px;background:#6C63FF;color:#fff;cursor:pointer;font-weight:600;">حفظ</button>' +
                 '</div>'
             );
@@ -762,33 +661,24 @@
                 var t = $ed.find('#ml-txt').val().trim();
                 var bl = $ed.find('#ml-blank').is(':checked');
 
-                if (!url) { alert('أدخل رابط من فضلك'); return; }
+                if (!url) { alert('أدخل رابط'); return; }
 
                 if ($el.is('a')) {
                     $el.attr('href', url);
-                    if (t) {
-                        // Only change text if no child elements
-                        var hasChildEls = false;
-                        $el.children().each(function() {
-                            if (this.nodeType === 1) { hasChildEls = true; return false; }
-                        });
-                        if (!hasChildEls) $el.text(t);
-                    }
-                    if (bl) {
-                        $el.attr('target', '_blank').attr('rel', 'noopener noreferrer');
-                    } else {
-                        $el.removeAttr('target').removeAttr('rel');
-                    }
+                    var hasChildEls = false;
+                    $el.children().each(function() { if (this.nodeType === 1) { hasChildEls = true; return false; } });
+                    if (!hasChildEls && t) $el.text(t);
+                    if (bl) { $el.attr('target', '_blank').attr('rel', 'noopener noreferrer'); }
+                    else { $el.removeAttr('target').removeAttr('rel'); }
                 }
 
                 $ed.remove();
-                self.notify('🔗 تم حفظ الرابط!');
+                self.notify('🔗 تم الحفظ!');
             });
 
             if ($el.is('a')) {
                 $ed.find('#ml-del').on('click', function() {
-                    var t2 = $el.text();
-                    $el.replaceWith(t2);
+                    $el.replaceWith($el.text());
                     $ed.remove();
                     self.notify('تم حذف الرابط');
                 });
@@ -807,27 +697,24 @@
         },
 
         // ============================================
-        // IMAGE EDITING
-        // Images are NOT inside contenteditable
-        // They get their own click handler
+        // IMAGES (separate from text, no contenteditable)
         // ============================================
         setupImages: function($w, wid) {
             var self = this;
-            $w.find('img').each(function(idx) {
+            $w.find('img').each(function() {
                 var $img = $(this);
                 if ($img.data('m4-img')) return;
                 $img.data('m4-img', true);
 
-                // Make sure images are not contenteditable
                 $img.attr('contenteditable', 'false');
                 $img.css({ cursor: 'pointer', transition: 'outline 0.15s' });
 
                 $img.on('mouseenter.m4', function() {
-                    if (!$(this).data('m4-img-sel')) {
+                    if (!$(this).data('m4-isel')) {
                         $(this).css({ outline: '3px solid rgba(108,99,255,0.5)', outlineOffset: '3px' });
                     }
                 }).on('mouseleave.m4', function() {
-                    if (!$(this).data('m4-img-sel')) {
+                    if (!$(this).data('m4-isel')) {
                         $(this).css('outline', 'none');
                     }
                 });
@@ -835,31 +722,24 @@
                 $img.on('click.m4', function(e) {
                     e.preventDefault();
                     e.stopPropagation();
-
-                    // Deselect any text selection
                     window.getSelection().removeAllRanges();
-
-                    self.selectImage($(this), wid);
+                    self.selectImg($(this), wid);
                 });
             });
         },
 
-        selectImage: function($img, wid) {
+        selectImg: function($img, wid) {
             var self = this;
 
-            // Deselect previous
-            $('[data-m4-img-sel]').removeData('m4-img-sel').css('outline', 'none');
+            $('[data-m4-isel]').removeData('m4-isel').css('outline', 'none');
             $('.m-img-bar, .m-resize-h').remove();
             this.hideToolbar();
 
-            $img.data('m4-img-sel', true);
+            $img.data('m4-isel', true);
             $img.css({ outline: '3px solid #6C63FF', outlineOffset: '3px' });
 
-            var off = $img.offset();
-            var w = $img.width();
-            var h = $img.height();
+            var off = $img.offset(), w = $img.width(), h = $img.height(), ratio = w / h;
 
-            // Image toolbar
             var $bar = $('<div class="m-img-bar">').css({
                 position: 'absolute', zIndex: 999999,
                 top: Math.max(5, off.top - 42) + 'px',
@@ -870,94 +750,71 @@
                 border: '1px solid rgba(108,99,255,0.3)'
             }).on('mousedown', function(e) { e.preventDefault(); });
 
-            // Replace image button
-            var $replace = this.createBtn('📷', 'استبدال الصورة');
-            $replace.on('mousedown', function(e) {
+            var s = function() { return self.sep(); };
+
+            // Replace
+            var $rep = this.btn('📷', 'استبدال');
+            $rep.on('mousedown', function(e) {
                 e.preventDefault();
-                var frame = wp.media({
-                    title: 'اختر صورة',
-                    multiple: false,
-                    library: { type: 'image' }
-                });
+                var frame = wp.media({ title: 'اختر صورة', multiple: false, library: { type: 'image' } });
                 frame.on('select', function() {
-                    var attachment = frame.state().get('selection').first().toJSON();
-                    $img.attr('src', attachment.url);
-                    if (attachment.width) $img.attr('width', attachment.width);
-                    if (attachment.height) $img.attr('height', attachment.height);
+                    var att = frame.state().get('selection').first().toJSON();
+                    $img.attr('src', att.url);
                     self.notify('✅ تم تغيير الصورة!');
-                    self.selectImage($img, wid);
                 });
                 frame.open();
             });
 
-            // Width/Height
-            var $wLabel = $('<span>').css({ color: '#aaa', fontSize: '10px' }).text('W:');
-            var $wD = this.createBtn('−', 'Width -');
-            var $wL = $('<span>').css({ color: '#fff', fontSize: '11px', minWidth: '30px', textAlign: 'center', display: 'inline-block' }).text(w);
-            var $wU = this.createBtn('+', 'Width +');
-
-            var ratio = w / h;
+            // Width
+            var $wD = this.btn('−', 'أصغر');
+            var $wL = $('<span>').css({ color: '#fff', fontSize: '11px', minWidth: '30px', textAlign: 'center', display: 'inline-block' }).text(Math.round(w));
+            var $wU = this.btn('+', 'أكبر');
 
             $wD.on('mousedown', function(e) {
                 e.preventDefault();
-                w = Math.max(30, w - 10);
-                h = Math.round(w / ratio);
-                $img.css({ width: w + 'px', height: h + 'px' }).attr({ width: w, height: h });
-                $wL.text(w);
+                w = Math.max(30, w - 10); h = Math.round(w / ratio);
+                $img.css({ width: w + 'px', height: h + 'px' }).attr({ width: Math.round(w), height: Math.round(h) });
+                $wL.text(Math.round(w));
             });
             $wU.on('mousedown', function(e) {
                 e.preventDefault();
-                w += 10;
-                h = Math.round(w / ratio);
-                $img.css({ width: w + 'px', height: h + 'px' }).attr({ width: w, height: h });
-                $wL.text(w);
+                w += 10; h = Math.round(w / ratio);
+                $img.css({ width: w + 'px', height: h + 'px' }).attr({ width: Math.round(w), height: Math.round(h) });
+                $wL.text(Math.round(w));
             });
 
             // Border Radius
             var br = parseInt($img.css('border-radius')) || 0;
-            var $brD = this.createBtn('◻', 'تقليل الحواف');
+            var $brD = this.btn('◻', 'أقل');
             var $brL = $('<span>').css({ color: '#aaa', fontSize: '10px', minWidth: '22px', textAlign: 'center', display: 'inline-block' }).text(br);
-            var $brU = this.createBtn('◯', 'زيادة الحواف');
+            var $brU = this.btn('◯', 'أكثر');
 
-            $brD.on('mousedown', function(e) {
-                e.preventDefault();
-                br = Math.max(0, br - 4);
-                $img.css('border-radius', br + 'px');
-                $brL.text(br);
-            });
-            $brU.on('mousedown', function(e) {
-                e.preventDefault();
-                br += 4;
-                $img.css('border-radius', br + 'px');
-                $brL.text(br);
-            });
+            $brD.on('mousedown', function(e) { e.preventDefault(); br = Math.max(0, br - 4); $img.css('border-radius', br + 'px'); $brL.text(br); });
+            $brU.on('mousedown', function(e) { e.preventDefault(); br += 4; $img.css('border-radius', br + 'px'); $brL.text(br); });
 
-            var s = function() { return self.createSep(); };
-            $bar.append($replace, s(), $wLabel, $wD, $wL, $wU, s(), $brD, $brL, $brU);
+            $bar.append($rep, s(), $wD, $wL, $wU, s(), $brD, $brL, $brU);
             $('body').append($bar);
 
-            // Click elsewhere to deselect
             setTimeout(function() {
-                $(document).on('click.mimgdesel4', function(e) {
+                $(document).on('click.mimg4', function(e) {
                     if (!$(e.target).closest('.m-img-bar').length && !$(e.target).is($img[0])) {
-                        $img.removeData('m4-img-sel').css('outline', 'none');
-                        $('.m-img-bar, .m-resize-h').remove();
-                        $(document).off('click.mimgdesel4');
+                        $img.removeData('m4-isel').css('outline', 'none');
+                        $('.m-img-bar').remove();
+                        $(document).off('click.mimg4');
                     }
                 });
             }, 100);
         },
 
         // ============================================
-        // BOX EDITING (right-click on containers)
+        // BOX EDITING (right-click)
         // ============================================
         setupBoxes: function($w, wid) {
             var self = this;
-            $w.find('div, section, article, header, footer, ul, ol, table, blockquote, aside, nav, main').each(function() {
+            $w.find('div, section, article, header, footer, ul, ol, table, blockquote').each(function() {
                 var $box = $(this);
                 if ($box.data('m4-box')) return;
-                if ($box.hasClass('momentum-html-output')) return;
-                if ($box.hasClass('m-badge')) return;
+                if ($box.hasClass('momentum-html-output') || $box.hasClass('m-badge')) return;
                 if ($box.closest('#m-toolbar, #m-link-editor, .m-img-bar, .m-box-bar').length) return;
                 $box.data('m4-box', true);
 
@@ -970,13 +827,9 @@
 
                 $box.on('mouseenter.m4', function(e) {
                     e.stopPropagation();
-                    if (!$(this).data('m4-box-sel')) {
-                        $(this).css({ outline: '1px dashed rgba(255,152,0,0.35)', outlineOffset: '1px' });
-                    }
+                    if (!$(this).data('m4-bsel')) $(this).css({ outline: '1px dashed rgba(255,152,0,0.35)', outlineOffset: '1px' });
                 }).on('mouseleave.m4', function() {
-                    if (!$(this).data('m4-box-sel')) {
-                        $(this).css('outline', 'none');
-                    }
+                    if (!$(this).data('m4-bsel')) $(this).css('outline', 'none');
                 });
             });
         },
@@ -986,7 +839,7 @@
             this.hideToolbar();
             $('.m-box-bar, .m-img-bar').remove();
 
-            $box.data('m4-box-sel', true);
+            $box.data('m4-bsel', true);
             $box.css({ outline: '2px solid #FF9800', outlineOffset: '2px' });
             var off = $box.offset();
 
@@ -998,34 +851,30 @@
                 display: 'flex', gap: '4px', alignItems: 'center',
                 boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
                 border: '1px solid rgba(255,152,0,0.4)',
-                flexWrap: 'wrap', maxWidth: '500px'
+                flexWrap: 'wrap', maxWidth: '480px'
             }).on('mousedown', function(e) { e.preventDefault(); });
 
             var tag = $box.prop('tagName').toLowerCase();
             var $label = $('<span>').css({ color: '#FF9800', fontSize: '11px', fontWeight: '600', padding: '0 6px', fontFamily: 'monospace' }).text(tag);
-            var s = function() { return self.createSep(); };
+            var s = function() { return self.sep(); };
 
-            // Duplicate
-            var $dup = this.createBtn('⧉', 'نسخ');
+            var $dup = this.btn('⧉', 'نسخ');
             $dup.on('mousedown', function(e) {
                 e.preventDefault();
                 var $clone = $box.clone(true);
-                $clone.removeData();
-                $clone.find('*').removeData();
+                $clone.find('*').addBack().removeData();
                 $box.after($clone);
                 setTimeout(function() {
-                    var $w = $clone.closest('.momentum-html-output');
-                    self.makeEditable($w, wid);
-                    self.setupImages($w, wid);
-                    self.setupLinks($w, wid);
-                    self.setupBoxes($w, wid);
+                    var $w2 = $clone.closest('.momentum-html-output');
+                    self.makeEditable($w2, wid);
+                    self.setupImages($w2, wid);
+                    self.setupLinks($w2, wid);
+                    self.setupBoxes($w2, wid);
                 }, 100);
                 self.notify('تم النسخ');
             });
 
-            // Delete
-            var $del = this.createBtn('🗑', 'حذف');
-            $del.css('background', '#5c1a1a');
+            var $del = this.btn('🗑', 'حذف').css('background', '#5c1a1a');
             $del.on('mousedown', function(e) {
                 e.preventDefault();
                 if (confirm('حذف هذا العنصر؟')) {
@@ -1036,71 +885,46 @@
             });
 
             // Padding
-            var pad = parseInt($box.css('padding')) || 0;
-            var $padD = this.createBtn('P−', 'Padding -');
-            var $padL = $('<span>').css({ color: '#aaa', fontSize: '10px', minWidth: '24px', textAlign: 'center', display: 'inline-block' }).text(pad);
-            var $padU = this.createBtn('P+', 'Padding +');
+            var pad = parseInt($box.css('padding-top')) || 0;
+            var $pD = this.btn('P−', '-');
+            var $pL = $('<span>').css({ color: '#aaa', fontSize: '10px', minWidth: '24px', textAlign: 'center', display: 'inline-block' }).text(pad);
+            var $pU = this.btn('P+', '+');
 
-            $padD.on('mousedown', function(e) {
-                e.preventDefault();
-                pad = Math.max(0, pad - 5);
-                $box.css('padding', pad + 'px');
-                $padL.text(pad);
-            });
-            $padU.on('mousedown', function(e) {
-                e.preventDefault();
-                pad += 5;
-                $box.css('padding', pad + 'px');
-                $padL.text(pad);
-            });
+            $pD.on('mousedown', function(e) { e.preventDefault(); pad = Math.max(0, pad - 5); $box.css('padding', pad + 'px'); $pL.text(pad); });
+            $pU.on('mousedown', function(e) { e.preventDefault(); pad += 5; $box.css('padding', pad + 'px'); $pL.text(pad); });
 
-            // Background color
-            var $bgLabel = $('<span>').css({ color: '#aaa', fontSize: '10px' }).text('BG:');
-            var $bgClr = $('<input type="color">').val(self.rgbToHex($box.css('background-color') || '#ffffff')).css({
-                width: '28px', height: '24px', border: 'none', borderRadius: '4px',
-                cursor: 'pointer', background: 'transparent', padding: '0'
+            // BG
+            var $bgL = $('<span>').css({ color: '#aaa', fontSize: '10px' }).text('BG:');
+            var $bgC = $('<input type="color">').val(self.rgbToHex($box.css('background-color') || '#fff')).css({
+                width: '28px', height: '24px', border: 'none', borderRadius: '4px', cursor: 'pointer', background: 'transparent'
             });
-            $bgClr.on('input', function() {
-                $box.css('background-color', $(this).val());
-            });
+            $bgC.on('input', function() { $box.css('background-color', $(this).val()); });
 
-            // Border radius
+            // Border Radius
             var brd = parseInt($box.css('border-radius')) || 0;
-            var $brdD = this.createBtn('R−', 'Radius -');
-            var $brdL = $('<span>').css({ color: '#aaa', fontSize: '10px', minWidth: '22px', textAlign: 'center', display: 'inline-block' }).text(brd);
-            var $brdU = this.createBtn('R+', 'Radius +');
+            var $bD = this.btn('R−', '-');
+            var $bL = $('<span>').css({ color: '#aaa', fontSize: '10px', minWidth: '22px', textAlign: 'center', display: 'inline-block' }).text(brd);
+            var $bU = this.btn('R+', '+');
 
-            $brdD.on('mousedown', function(e) {
-                e.preventDefault();
-                brd = Math.max(0, brd - 2);
-                $box.css('border-radius', brd + 'px');
-                $brdL.text(brd);
-            });
-            $brdU.on('mousedown', function(e) {
-                e.preventDefault();
-                brd += 2;
-                $box.css('border-radius', brd + 'px');
-                $brdL.text(brd);
-            });
+            $bD.on('mousedown', function(e) { e.preventDefault(); brd = Math.max(0, brd - 2); $box.css('border-radius', brd + 'px'); $bL.text(brd); });
+            $bU.on('mousedown', function(e) { e.preventDefault(); brd += 2; $box.css('border-radius', brd + 'px'); $bL.text(brd); });
 
-            $bar.append($label, s(), $dup, $del, s(), $padD, $padL, $padU, s(),
-                        $bgLabel, $bgClr, s(), $brdD, $brdL, $brdU);
+            $bar.append($label, s(), $dup, $del, s(), $pD, $pL, $pU, s(), $bgL, $bgC, s(), $bD, $bL, $bU);
             $('body').append($bar);
 
-            // Click elsewhere to deselect
-            $(document).on('click.mboxdesel4', function(e) {
+            $(document).on('click.mbox4', function(e) {
                 if (!$(e.target).closest('.m-box-bar').length && !$(e.target).is($box[0])) {
-                    $box.removeData('m4-box-sel').css('outline', 'none');
+                    $box.removeData('m4-bsel').css('outline', 'none');
                     $('.m-box-bar').remove();
-                    $(document).off('click.mboxdesel4');
+                    $(document).off('click.mbox4');
                 }
             });
         },
 
         // ============================================
-        // UTILITY FUNCTIONS
+        // UTILITY
         // ============================================
-        createBtn: function(text, title, active) {
+        btn: function(text, title, active) {
             return $('<button type="button">').text(text).attr('title', title || '').css({
                 background: active ? '#6C63FF' : '#2a2a3e',
                 color: '#fff', border: 'none', borderRadius: '6px',
@@ -1109,34 +933,27 @@
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 transition: 'background 0.15s'
             }).on('mouseenter', function() {
-                if ($(this).css('background-color') !== 'rgb(108, 99, 255)') {
-                    $(this).css('background', '#333');
-                }
+                if (!$(this).data('active')) $(this).css('background', '#333');
             }).on('mouseleave', function() {
-                if ($(this).css('background-color') === 'rgb(51, 51, 51)') {
-                    $(this).css('background', '#2a2a3e');
-                }
+                if (!$(this).data('active')) $(this).css('background', '#2a2a3e');
             });
         },
 
-        createSep: function() {
-            return $('<div>').css({
-                width: '1px', height: '20px', background: '#333',
-                margin: '0 2px', flexShrink: '0'
-            });
+        sep: function() {
+            return $('<div>').css({ width: '1px', height: '20px', background: '#333', margin: '0 2px', flexShrink: '0' });
         },
 
         rgbToHex: function(rgb) {
             if (!rgb || rgb === 'transparent' || rgb === 'rgba(0, 0, 0, 0)') return '#ffffff';
             if (rgb.charAt(0) === '#') return rgb;
-            var match = rgb.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-            if (!match) return '#ffffff';
-            return '#' + ((1 << 24) + (parseInt(match[1]) << 16) + (parseInt(match[2]) << 8) + parseInt(match[3])).toString(16).slice(1);
+            var m = rgb.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+            if (!m) return '#ffffff';
+            return '#' + ((1 << 24) + (parseInt(m[1]) << 16) + (parseInt(m[2]) << 8) + parseInt(m[3])).toString(16).slice(1);
         },
 
-        escAttr: function(str) {
-            if (!str) return '';
-            return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        escAttr: function(s) {
+            if (!s) return '';
+            return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         },
 
         notify: function(msg) {
@@ -1154,6 +971,43 @@
         }
     };
 
+    /**
+     * STANDALONE FUNCTION: Clean editor-only styles from a style string
+     * This is kept outside the M object for use in sendCleanHtml
+     */
+    function cleanEditorStyles(style) {
+        if (!style) return '';
+
+        var props = style.split(';');
+        var clean = [];
+
+        for (var i = 0; i < props.length; i++) {
+            var prop = props[i].trim();
+            if (!prop) continue;
+
+            // Skip editor-only properties
+            var isEditorProp = false;
+
+            for (var j = 0; j < EDITOR_ONLY_STYLES.length; j++) {
+                if (prop.toLowerCase().indexOf(EDITOR_ONLY_STYLES[j]) === 0) {
+                    isEditorProp = true;
+                    break;
+                }
+            }
+
+            // Skip cursor:text specifically (but keep other cursor values)
+            if (!isEditorProp && /^\s*cursor\s*:\s*text\s*$/i.test(prop)) {
+                isEditorProp = true;
+            }
+
+            if (!isEditorProp) {
+                clean.push(prop);
+            }
+        }
+
+        return clean.join('; ').trim();
+    }
+
     // ============================================
     // BOOTSTRAP
     // ============================================
@@ -1167,7 +1021,6 @@
         });
     }
 
-    // Backup init
     setTimeout(function() { M.tryInit(); }, 2000);
 
 })(jQuery);
