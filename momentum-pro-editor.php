@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Momentum Pro Editor
- * Description: Elementor widget that parses HTML code and provides visual controls for easy editing — with live code sync
- * Version: 3.0.0
+ * Description: Elementor widget - Visual HTML Editor with inline text selection styling
+ * Version: 4.0.0
  * Author: Yasser Momentum
  * Author URI: https://momentummix.com/
  * License: GPL v3
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
-define( 'MOMENTUM_PRO_VERSION', '3.0.0' );
+define( 'MOMENTUM_PRO_VERSION', '4.0.0' );
 define( 'MOMENTUM_PRO_PATH', plugin_dir_path( __FILE__ ) );
 define( 'MOMENTUM_PRO_URL', plugin_dir_url( __FILE__ ) );
 
@@ -42,17 +42,9 @@ final class Momentum_Pro_Editor {
 
         add_action( 'elementor/elements/categories_registered', [ $this, 'register_categories' ] );
         add_action( 'elementor/widgets/register', [ $this, 'register_widgets' ] );
-
-        // Editor panel scripts
         add_action( 'elementor/editor/before_enqueue_scripts', [ $this, 'editor_scripts' ] );
-
-        // Preview iframe scripts
         add_action( 'elementor/preview/enqueue_scripts', [ $this, 'preview_scripts' ] );
-
-        // Frontend styles only
         add_action( 'elementor/frontend/after_enqueue_styles', [ $this, 'frontend_styles' ] );
-
-        // AJAX handler for code sync
         add_action( 'wp_ajax_momentum_sync_code', [ $this, 'ajax_sync_code' ] );
     }
 
@@ -106,8 +98,6 @@ final class Momentum_Pro_Editor {
             MOMENTUM_PRO_VERSION,
             true
         );
-
-        // Media library for image replacement
         wp_enqueue_media();
     }
 
@@ -120,9 +110,6 @@ final class Momentum_Pro_Editor {
         );
     }
 
-    /**
-     * AJAX: Sync modifications back to HTML code
-     */
     public function ajax_sync_code() {
         check_ajax_referer( 'momentum_sync_nonce', 'nonce' );
 
@@ -131,17 +118,42 @@ final class Momentum_Pro_Editor {
         }
 
         $html = wp_unslash( $_POST['html'] ?? '' );
-        $mods = json_decode( wp_unslash( $_POST['mods'] ?? '{}' ), true );
 
-        if ( empty( $html ) || empty( $mods ) ) {
+        if ( empty( $html ) ) {
             wp_send_json_error( 'Missing data' );
         }
 
-        // Apply modifications to HTML using the same logic as render
-        $widget = new \Momentum_HTML_Pro_Widget();
-        $new_html = $widget->public_apply_mods( $html, $mods );
+        // The HTML coming from the preview is already the final modified version
+        // We just need to clean it up
+        $clean_html = $this->clean_editor_artifacts( $html );
 
-        wp_send_json_success( [ 'html' => $new_html ] );
+        wp_send_json_success( [ 'html' => $clean_html ] );
+    }
+
+    /**
+     * Remove editor-only artifacts from HTML before saving
+     */
+    private function clean_editor_artifacts( $html ) {
+        // Remove contenteditable attributes
+        $html = preg_replace( '/\s*contenteditable\s*=\s*"[^"]*"/i', '', $html );
+
+        // Remove editor outline styles
+        $html = preg_replace( '/\s*outline\s*:\s*[^;]*;?/i', '', $html );
+        $html = preg_replace( '/\s*outline-offset\s*:\s*[^;]*;?/i', '', $html );
+
+        // Remove cursor:text
+        $html = preg_replace( '/\s*cursor\s*:\s*text\s*;?/i', '', $html );
+
+        // Remove empty style attributes
+        $html = preg_replace( '/\s*style\s*=\s*"\s*"/i', '', $html );
+
+        // Remove m-badge
+        $html = preg_replace( '/<div class="m-badge"[^>]*>.*?<\/div>/is', '', $html );
+
+        // Remove data-m attributes
+        $html = preg_replace( '/\s*data-m-[a-z0-9-]+\s*=\s*"[^"]*"/i', '', $html );
+
+        return trim( $html );
     }
 }
 
