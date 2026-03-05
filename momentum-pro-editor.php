@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Momentum Pro Editor
  * Description: Elementor widget - Visual HTML Editor with inline text selection styling
- * Version: 4.1.0
+ * Version: 5.0.0
  * Author: Yasser Momentum
  * Author URI: https://momentummix.com/
  * License: GPL v3
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
-define( 'MOMENTUM_PRO_VERSION', '4.1.0' );
+define( 'MOMENTUM_PRO_VERSION', '5.0.0' );
 define( 'MOMENTUM_PRO_PATH', plugin_dir_path( __FILE__ ) );
 define( 'MOMENTUM_PRO_URL', plugin_dir_url( __FILE__ ) );
 
@@ -49,12 +49,12 @@ final class Momentum_Pro_Editor {
     }
 
     public function admin_notice_missing_elementor() {
-        echo '<div class="notice notice-warning is-dismissible"><p>Momentum Pro Editor requires Elementor.</p></div>';
+        echo '<div class="notice notice-warning is-dismissible"><p><strong>Momentum Pro Editor</strong> requires <strong>Elementor</strong> to be installed and activated.</p></div>';
     }
 
     public function register_categories( $em ) {
         $em->add_category( 'momentum-pro', [
-            'title' => 'Momentum Pro',
+            'title' => '⚡ Momentum Pro',
             'icon'  => 'fa fa-code',
         ] );
     }
@@ -112,7 +112,6 @@ final class Momentum_Pro_Editor {
 
     /**
      * AJAX: Sync - receives already-clean HTML from JS
-     * The JavaScript does the cleaning, PHP just validates
      */
     public function ajax_sync_code() {
         check_ajax_referer( 'momentum_sync_nonce', 'nonce' );
@@ -127,7 +126,6 @@ final class Momentum_Pro_Editor {
             wp_send_json_error( 'Missing data' );
         }
 
-        // Use DOMDocument for safe cleaning - only remove editor artifacts
         $clean_html = $this->safe_clean_html( $html );
 
         wp_send_json_success( [ 'html' => $clean_html ] );
@@ -135,7 +133,6 @@ final class Momentum_Pro_Editor {
 
     /**
      * Safe HTML cleaning using DOMDocument
-     * ONLY removes editor-specific attributes, preserves ALL styles
      */
     private function safe_clean_html( $html ) {
         if ( empty( $html ) ) return $html;
@@ -148,7 +145,6 @@ final class Momentum_Pro_Editor {
             $flags |= LIBXML_HTML_NODEFDTD;
         }
 
-        // Wrap to prevent DOMDocument issues
         $wrapped = '<div id="m-safe-root">' . $html . '</div>';
         $dom->loadHTML( '<?xml encoding="UTF-8">' . $wrapped, $flags );
         libxml_clear_errors();
@@ -175,10 +171,8 @@ final class Momentum_Pro_Editor {
         $all_elements = $xpath->query( '//*' );
         if ( $all_elements ) {
             foreach ( $all_elements as $el ) {
-                // Remove contenteditable
                 $el->removeAttribute( 'contenteditable' );
 
-                // Remove data-m4-* attributes only
                 $attrs_to_remove = [];
                 foreach ( $el->attributes as $attr ) {
                     if ( strpos( $attr->name, 'data-m4-' ) === 0 ||
@@ -193,7 +187,6 @@ final class Momentum_Pro_Editor {
                     $el->removeAttribute( $attr_name );
                 }
 
-                // Clean ONLY editor-injected styles from style attribute
                 $style = $el->getAttribute( 'style' );
                 if ( $style ) {
                     $clean_style = $this->clean_editor_styles_only( $style );
@@ -221,11 +214,9 @@ final class Momentum_Pro_Editor {
             }
         }
 
-        // Extract content from wrapper
         $root = $dom->getElementById( 'm-safe-root' );
         $output = '';
         if ( $root ) {
-            // Skip the momentum-html-output wrapper div - get its inner content
             foreach ( $root->childNodes as $child ) {
                 $output .= $dom->saveHTML( $child );
             }
@@ -235,20 +226,18 @@ final class Momentum_Pro_Editor {
     }
 
     /**
-     * Remove ONLY editor-injected CSS properties, keep everything else intact
+     * Remove ONLY editor-injected CSS properties
      */
     private function clean_editor_styles_only( $style ) {
         if ( empty( $style ) ) return '';
 
-        // Parse style into individual properties
         $properties = array_filter( array_map( 'trim', explode( ';', $style ) ) );
         $clean_props = [];
 
-        // These are the ONLY properties the editor injects temporarily
         $editor_only_patterns = [
             '/^outline\s*:/i',
             '/^outline-offset\s*:/i',
-            '/^cursor\s*:\s*text\s*$/i',          // only cursor:text, not other cursor values
+            '/^cursor\s*:\s*text\s*$/i',
             '/^-webkit-tap-highlight-color\s*:/i',
         ];
 
