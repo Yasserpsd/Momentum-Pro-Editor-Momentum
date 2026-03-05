@@ -1,18 +1,22 @@
 /**
- * Momentum Pro Editor v4.0 - Editor Panel Styles
+ * Momentum Pro Editor v5.0 - Editor Panel Styles
  */
 
+/* Category icon color */
 .elementor-element .icon .eicon-code {
     color: #6C63FF;
 }
 
+/* Section titles */
 .elementor-control-section_html_code .elementor-panel-heading-title,
+.elementor-control-section_responsive .elementor-panel-heading-title,
 .elementor-control-section_spacing .elementor-panel-heading-title,
 .elementor-control-section_css .elementor-panel-heading-title {
     font-weight: 700 !important;
     font-size: 13px !important;
 }
 
+/* Code editor border */
 .elementor-control-html_code .elementor-control-input-wrapper,
 .elementor-control-custom_css .elementor-control-input-wrapper {
     border-radius: 8px !important;
@@ -26,11 +30,26 @@
     border-color: #6C63FF !important;
 }
 
+/* Sync button hover */
+#momentum-sync-btn {
+    transition: all 0.2s ease !important;
+}
+
 #momentum-sync-btn:hover {
     transform: translateY(-1px) !important;
     box-shadow: 0 4px 15px rgba(76, 175, 80, 0.4) !important;
 }
 
+#momentum-sync-btn:active {
+    transform: translateY(0) !important;
+}
+
+/* Status message */
+#momentum-sync-status {
+    transition: opacity 0.3s ease;
+}
+
+/* Dark mode support */
 .e-dark-mode .elementor-control-html_code .elementor-control-input-wrapper,
 .e-dark-mode .elementor-control-custom_css .elementor-control-input-wrapper {
     border-color: #444 !important;
@@ -39,4 +58,17 @@
 .e-dark-mode .elementor-control-html_code .elementor-control-input-wrapper:focus-within,
 .e-dark-mode .elementor-control-custom_css .elementor-control-input-wrapper:focus-within {
     border-color: #6C63FF !important;
+}
+
+/* Responsive section styling */
+.elementor-control-section_responsive .elementor-panel-heading {
+    background: linear-gradient(135deg, rgba(108, 99, 255, 0.05), rgba(76, 175, 80, 0.05)) !important;
+}
+
+/* Branding dot indicator for Momentum sections */
+.elementor-control-section_html_code .elementor-panel-heading,
+.elementor-control-section_responsive .elementor-panel-heading,
+.elementor-control-section_spacing .elementor-panel-heading,
+.elementor-control-section_css .elementor-panel-heading {
+    border-left: 3px solid #6C63FF !important;
 }
