@@ -1,5 +1,5 @@
 /**
- * Momentum Pro Editor v4.0 - Preview Styles
+ * Momentum Pro Editor v5.0 - Preview Styles
  */
 
 .momentum-editable [contenteditable="true"] {
@@ -24,6 +24,7 @@
     -webkit-user-select: none;
 }
 
+/* Badge animation */
 .m-badge {
     animation: mBadgeIn 0.3s ease;
 }
@@ -32,6 +33,7 @@
     to   { opacity: 1; transform: translateY(0); }
 }
 
+/* Notification animation */
 .m-notify {
     animation: mNotifyIn 0.3s ease;
 }
@@ -40,9 +42,11 @@
     to   { opacity: 1; transform: translate(-50%, 0); }
 }
 
+/* Toolbar animations */
 #m-toolbar,
 .m-img-bar,
-.m-box-bar {
+.m-box-bar,
+#m-link-editor {
     animation: mToolbarIn 0.2s ease;
 }
 @keyframes mToolbarIn {
@@ -50,9 +54,14 @@
     to   { opacity: 1; transform: translateY(0); }
 }
 
-/* Make sure images inside contenteditable don't get weird selection */
+/* Images inside contenteditable */
 .momentum-editable [contenteditable="true"] img {
     -webkit-user-select: none;
     user-select: none;
     pointer-events: auto;
+}
+
+/* Box hover hint */
+.momentum-editable div:not(.momentum-html-output):not(.m-badge):not(.m-notify):hover {
+    cursor: default;
 }
