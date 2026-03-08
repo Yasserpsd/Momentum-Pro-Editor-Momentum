@@ -5,23 +5,23 @@
 
         initialized: false,
         _syncInProgress: false,
+        _autoSyncTimers: {},
 
         init: function() {
             if (this.initialized) return;
             this.initialized = true;
             this.listenToSyncRequest();
             this.injectBranding();
-            console.log('[Momentum] Panel: Ready v5.0');
+            this.startAutoSyncListener();
+            console.log('[Momentum] Panel: Ready v6.0');
         },
 
         injectBranding: function() {
-            // Add Momentum branding to panel sections
             var checkBranding = setInterval(function() {
                 var $sections = $('.elementor-control-section_html_code .elementor-panel-heading-title');
                 if ($sections.length) {
                     clearInterval(checkBranding);
-                    // Add a small M icon before sections belonging to Momentum
-                    $('.elementor-control-section_html_code, .elementor-control-section_responsive, .elementor-control-section_spacing, .elementor-control-section_css').each(function() {
+                    $('.elementor-control-section_html_code, .elementor-control-section_spacing, .elementor-control-section_css').each(function() {
                         var $title = $(this).find('.elementor-panel-heading-title');
                         if ($title.length && !$title.data('m-branded')) {
                             $title.data('m-branded', true);
@@ -30,6 +30,19 @@
                     });
                 }
             }, 1000);
+        },
+
+        // ============================================
+        // AUTO-SYNC: Listen for auto-sync triggers from preview
+        // ============================================
+        startAutoSyncListener: function() {
+            var self = this;
+            window.addEventListener('message', function(e) {
+                if (!e.data) return;
+                if (e.data.type === 'momentum-auto-sync-tick') {
+                    self.syncToCode(e.data.widgetId, e.data.html);
+                }
+            });
         },
 
         listenToSyncRequest: function() {
@@ -46,7 +59,6 @@
             var self = this;
 
             if (self._syncInProgress) {
-                console.warn('[Momentum] Sync already in progress');
                 return;
             }
             self._syncInProgress = true;
@@ -64,7 +76,6 @@
                 return;
             }
 
-            // Show loading state
             var $btn = $('#momentum-sync-btn');
             var originalText = $btn.html();
             $btn.html('⏳ جاري المزامنة...').prop('disabled', true).css('opacity', '0.7');
@@ -86,7 +97,6 @@
                         var newHtml = response.data.html;
 
                         try {
-                            // Method 1: Use Elementor's $e.run command (most reliable)
                             if (typeof $e !== 'undefined' && $e.run) {
                                 $e.run('document/elements/settings', {
                                     container: self.getContainer(widget),
@@ -94,7 +104,6 @@
                                     options: { external: true }
                                 });
                             } else {
-                                // Method 2: Direct settings update
                                 var settings = widget.get('settings');
                                 if (settings && typeof settings.set === 'function') {
                                     settings.set('html_code', newHtml);
@@ -103,7 +112,6 @@
                                 }
                             }
 
-                            // Notify preview
                             try {
                                 var previewFrame = elementor.$preview && elementor.$preview[0];
                                 if (previewFrame && previewFrame.contentWindow) {
@@ -112,19 +120,15 @@
                                         widgetId: widgetId
                                     }, '*');
                                 }
-                            } catch(e2) {
-                                console.warn('[Momentum] Could not notify preview:', e2);
-                            }
+                            } catch(e2) {}
 
-                            self.updateStatus('✅ تم مزامنة الكود بنجاح!', 'success');
-                            self.showToast('✅ تم مزامنة الكود بنجاح!');
+                            self.updateStatus('✅ تم المزامنة', 'success');
                             console.log('[Momentum] Code synced successfully!');
 
                         } catch(settingsError) {
                             console.error('[Momentum] Settings update error:', settingsError);
                             self.updateStatus('⚠️ تم المزامنة - اضغط حفظ', 'warning');
 
-                            // Last resort: update the code editor textarea directly
                             try {
                                 var $codeEditor = $('.elementor-control-html_code textarea');
                                 if ($codeEditor.length) {
@@ -142,7 +146,7 @@
                 error: function(xhr, status, error) {
                     $btn.html(originalText).prop('disabled', false).css('opacity', '1');
                     console.error('[Momentum] Sync AJAX error:', error);
-                    self.updateStatus('❌ خطأ في الاتصال - حاول تاني', 'error');
+                    self.updateStatus('❌ خطأ في الاتصال', 'error');
                     self._syncInProgress = false;
                 }
             });
@@ -176,7 +180,7 @@
                     $status.fadeOut(300, function() {
                         $(this).html('').css('display', '').css('color', '#888');
                     });
-                }, 4000);
+                }, 3000);
             }
         },
 
@@ -185,7 +189,7 @@
                 if (typeof elementor !== 'undefined' && elementor.notifications) {
                     elementor.notifications.showToast({
                         message: msg,
-                        duration: 3000
+                        duration: 2000
                     });
                 }
             } catch(e) {}
@@ -261,10 +265,7 @@
             }
 
             var panel = elementor.getPanelView();
-            if (!panel) {
-                console.warn('[Momentum] Panel not found');
-                return;
-            }
+            if (!panel) return;
 
             var currentPage = panel.getCurrentPageView();
             if (!currentPage) return;
