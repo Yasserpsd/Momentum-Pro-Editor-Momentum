@@ -2,6 +2,7 @@
 /**
  * Momentum HTML Pro Widget
  * Elementor Widget - Visual HTML Editor
+ * Version: 7.1.0
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -52,6 +53,7 @@ class Momentum_HTML_Pro_Widget extends \Elementor\Widget_Base {
 <p>اكتب كود HTML هنا ثم عدّله بصرياً من المعاينة!</p>
 </div>',
                 'description' => '',
+                'render_type' => 'none', // === مهم جداً: منع الـ re-render التلقائي ===
             ]
         );
 
@@ -74,6 +76,34 @@ class Momentum_HTML_Pro_Widget extends \Elementor\Widget_Base {
                     . 'عدّل المحتوى من المعاينة ثم اضغط مزامنة لحفظ التغييرات في الكود'
                     . '</p>'
                     . '</div>',
+                'content_classes' => 'elementor-descriptor',
+            ]
+        );
+
+        // === زر إعادة تحميل Preview بدون ما يهد التصميم ===
+        $this->add_control(
+            'refresh_button_html',
+            [
+                'type' => \Elementor\Controls_Manager::RAW_HTML,
+                'raw'  => '<div style="margin-top:5px;">'
+                    . '<button onclick="momentumRefreshPreview()" style="'
+                    . 'width:100%;padding:8px 16px;border:none;border-radius:8px;'
+                    . 'background:linear-gradient(135deg,#6C63FF,#5a52e0);color:#fff;'
+                    . 'font-size:12px;font-weight:600;cursor:pointer;'
+                    . 'display:flex;align-items:center;justify-content:center;gap:6px;'
+                    . 'box-shadow:0 2px 8px rgba(108,99,255,0.3);'
+                    . '">'
+                    . '🔃 تحديث المعاينة'
+                    . '</button>'
+                    . '</div>'
+                    . '<script>'
+                    . 'function momentumRefreshPreview(){'
+                    . '  try{'
+                    . '    var f=elementor.$preview&&elementor.$preview[0];'
+                    . '    if(f&&f.contentWindow)f.contentWindow.location.reload();'
+                    . '  }catch(e){console.warn("[Momentum] Refresh error:",e);}'
+                    . '}'
+                    . '</script>',
                 'content_classes' => 'elementor-descriptor',
             ]
         );
