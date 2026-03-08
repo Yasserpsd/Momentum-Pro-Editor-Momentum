@@ -1,5 +1,5 @@
 /**
- * Momentum Pro Editor v5.0 - Frontend Styles
+ * Momentum Pro Editor v6.0 - Frontend Styles (No Responsive Overrides)
  */
 
 .momentum-html-output {
@@ -10,40 +10,6 @@
 .momentum-html-output img {
     max-width: 100%;
     height: auto;
-}
-
-/* Responsive: Mobile */
-@media screen and (max-width: 767px) {
-    .momentum-html-output h1 { font-size: clamp(1.25rem, 5vw, 2rem); }
-    .momentum-html-output h2 { font-size: clamp(1.1rem, 4vw, 1.5rem); }
-    .momentum-html-output h3 { font-size: clamp(1rem, 3.5vw, 1.25rem); }
-    .momentum-html-output p,
-    .momentum-html-output span,
-    .momentum-html-output li { font-size: clamp(0.875rem, 3vw, 1rem); }
-
-    .momentum-html-output div,
-    .momentum-html-output section {
-        box-sizing: border-box;
-        max-width: 100%;
-        overflow-x: hidden;
-    }
-
-    .momentum-html-output table {
-        display: block;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-    }
-
-    .momentum-html-output [style*="display: flex"],
-    .momentum-html-output [style*="display:flex"] {
-        flex-wrap: wrap !important;
-    }
-}
-
-/* Responsive: Tablet */
-@media screen and (min-width: 768px) and (max-width: 1024px) {
-    .momentum-html-output h1 { font-size: clamp(1.5rem, 4vw, 2.5rem); }
-    .momentum-html-output h2 { font-size: clamp(1.25rem, 3.5vw, 2rem); }
 }
 
 /* Media elements */
