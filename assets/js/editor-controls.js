@@ -11,8 +11,7 @@
             this.initialized = true;
             this.listenToSyncRequest();
             this.injectBranding();
-            // ⛔ تم إزالة startAutoSyncListener بالكامل
-            console.log('[Momentum] Panel: Ready v7.0 (Manual Sync Only)');
+            console.log('[Momentum] Panel: Ready v7.1 (Manual Sync Only - Fixed)');
         },
 
         injectBranding: function() {
@@ -30,8 +29,6 @@
                 }
             }, 1000);
         },
-
-        // ⛔ تم إزالة startAutoSyncListener بالكامل
 
         listenToSyncRequest: function() {
             var self = this;
@@ -85,22 +82,24 @@
                         var newHtml = response.data.html;
 
                         try {
+                            // === الإصلاح الرئيسي: حفظ الكود بدون re-render ===
                             if (typeof $e !== 'undefined' && $e.run) {
-                                $e.run('document/elements/settings', {
-                                    container: self.getContainer(widget),
-                                    settings: { html_code: newHtml },
-                                    options: { external: true }
-                                });
-                            } else {
-                                var settings = widget.get('settings');
-                                if (settings && typeof settings.set === 'function') {
-                                    settings.set('html_code', newHtml);
+                                var container = self.getContainer(widget);
+                                if (container) {
+                                    $e.run('document/elements/settings', {
+                                        container: container,
+                                        settings: { html_code: newHtml },
+                                        options: { external: true }
+                                    });
                                 } else {
-                                    widget.setSetting('html_code', newHtml);
+                                    // fallback لو مفيش container
+                                    self.setSetting(widget, 'html_code', newHtml);
                                 }
+                            } else {
+                                self.setSetting(widget, 'html_code', newHtml);
                             }
 
-                            // أرسل رسالة للـ preview إن السنك تم - لكن بدون re-render
+                            // أرسل رسالة للـ preview إن السنك تم
                             try {
                                 var previewFrame = elementor.$preview && elementor.$preview[0];
                                 if (previewFrame && previewFrame.contentWindow) {
@@ -139,6 +138,19 @@
                     self._syncInProgress = false;
                 }
             });
+        },
+
+        setSetting: function(widget, key, value) {
+            try {
+                var settings = widget.get('settings');
+                if (settings && typeof settings.set === 'function') {
+                    settings.set(key, value, { silent: true }); // silent عشان ما يعملش re-render
+                } else if (typeof widget.setSetting === 'function') {
+                    widget.setSetting(key, value);
+                }
+            } catch(e) {
+                console.warn('[Momentum] setSetting fallback error:', e);
+            }
         },
 
         getContainer: function(widget) {
