@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Momentum Pro Editor
  * Description: Elementor widget - Visual HTML Editor with inline text selection styling
- * Version: 6.0.0
+ * Version: 7.0.0
  * Author: Yasser Momentum
  * Author URI: https://momentummix.com/
  * License: GPL v3
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
-define( 'MOMENTUM_PRO_VERSION', '6.0.0' );
+define( 'MOMENTUM_PRO_VERSION', '7.0.0' );
 define( 'MOMENTUM_PRO_PATH', plugin_dir_path( __FILE__ ) );
 define( 'MOMENTUM_PRO_URL', plugin_dir_url( __FILE__ ) );
 
@@ -111,7 +111,7 @@ final class Momentum_Pro_Editor {
     }
 
     /**
-     * AJAX: Sync - receives already-clean HTML from JS
+     * AJAX: Manual Sync Only
      */
     public function ajax_sync_code() {
         check_ajax_referer( 'momentum_sync_nonce', 'nonce' );
