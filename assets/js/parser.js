@@ -10,6 +10,33 @@
         '-webkit-tap-highlight-color'
     ];
 
+    /**
+     * Clean only editor-injected inline styles, keep everything else
+     */
+    function cleanEditorStyles(style) {
+        if (!style) return '';
+        var props = style.split(';').map(function(p) { return p.trim(); }).filter(Boolean);
+        var clean = [];
+        for (var i = 0; i < props.length; i++) {
+            var propName = props[i].split(':')[0].trim().toLowerCase();
+            var isEditorProp = false;
+            for (var j = 0; j < EDITOR_ONLY_STYLES.length; j++) {
+                if (propName === EDITOR_ONLY_STYLES[j]) {
+                    isEditorProp = true;
+                    break;
+                }
+            }
+            // Also skip cursor:text (editor only)
+            if (propName === 'cursor' && props[i].toLowerCase().indexOf('text') !== -1) {
+                isEditorProp = true;
+            }
+            if (!isEditorProp) {
+                clean.push(props[i]);
+            }
+        }
+        return clean.join('; ');
+    }
+
     var M = {
         ready: false,
         setupRunning: false,
@@ -21,7 +48,8 @@
         _toolbarTarget: null,
         _undoStack: [],
         _maxUndo: 30,
-        _lastStableState: null,
+        _autoSyncTimers: {},
+        _savedSelection: null,
 
         // ============================================
         // INITIALIZATION
@@ -36,9 +64,7 @@
                     || (typeof elementorFrontend !== 'undefined'
                         && typeof elementorFrontend.isEditMode === 'function'
                         && elementorFrontend.isEditMode());
-            } catch(e) {
-                console.warn('[Momentum] Editor detection error:', e);
-            }
+            } catch(e) {}
 
             if (!isEditor) return;
 
@@ -47,7 +73,7 @@
             this.watchDOM();
             this.listenMessages();
             this.setupKeyboardShortcuts();
-            console.log('[Momentum] Parser: Active v5.0');
+            console.log('[Momentum] Parser: Active v6.0');
         },
 
         tryInit: function() {
@@ -62,9 +88,29 @@
                     self.retryCount++;
                     setTimeout(function() { self.tryInit(); }, 500);
                 }
-            } catch(e) {
-                console.warn('[Momentum] tryInit error:', e);
+            } catch(e) {}
+        },
+
+        // ============================================
+        // SELECTION SAVE/RESTORE - Fixes link-to-selection bug
+        // ============================================
+        saveSelection: function() {
+            var sel = window.getSelection();
+            if (sel && sel.rangeCount > 0) {
+                this._savedSelection = sel.getRangeAt(0).cloneRange();
             }
+        },
+
+        restoreSelection: function() {
+            if (this._savedSelection) {
+                var sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(this._savedSelection);
+            }
+        },
+
+        clearSavedSelection: function() {
+            this._savedSelection = null;
         },
 
         // ============================================
@@ -72,17 +118,14 @@
         // ============================================
         setupKeyboardShortcuts: function() {
             var self = this;
-            $(document).on('keydown.m5', function(e) {
-                // Ctrl+Z - Undo
+            $(document).on('keydown.m6', function(e) {
                 if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
                     var $focused = $('[contenteditable="true"]:focus');
                     if ($focused.length && $focused.closest('.momentum-html-output').length) {
-                        // Let browser handle contenteditable undo
-                        return;
+                        return; // Let browser handle contenteditable undo
                     }
                 }
 
-                // Escape - close any open toolbar/popup
                 if (e.key === 'Escape') {
                     self.hideToolbar();
                     $('#m-link-editor').remove();
@@ -120,7 +163,7 @@
         },
 
         /**
-         * SAFE HTML EXTRACTION - Fixed sync issue
+         * SAFE HTML EXTRACTION - Treats each element independently
          */
         sendCleanHtml: function(widgetId) {
             try {
@@ -139,21 +182,22 @@
                 // 2. Remove the custom CSS <style> tags
                 $clone.find('style.momentum-custom-css, style.momentum-responsive-css').remove();
 
-                // 3. Clean each element
+                // 3. Clean each element independently - never touch sibling/parent content
                 $clone.find('*').addBack().each(function() {
                     var el = this;
 
                     // Remove contenteditable
                     el.removeAttribute('contenteditable');
 
-                    // Remove data-m4-* and data-m-* attributes ONLY
+                    // Remove data-m* attributes ONLY
                     var attrsToRemove = [];
                     for (var i = 0; i < el.attributes.length; i++) {
                         var name = el.attributes[i].name;
                         if (name.indexOf('data-m4-') === 0 ||
                             name.indexOf('data-m-') === 0 ||
                             name === 'data-m3' ||
-                            name === 'data-m4-init') {
+                            name === 'data-m4-init' ||
+                            name === 'data-auto-sync') {
                             attrsToRemove.push(name);
                         }
                     }
@@ -161,7 +205,7 @@
                         el.removeAttribute(attrsToRemove[j]);
                     }
 
-                    // Clean ONLY editor-injected styles
+                    // Clean ONLY editor-injected styles, preserve all user styles
                     var style = el.getAttribute('style');
                     if (style) {
                         var cleanStyle = this === $clone[0]
@@ -175,7 +219,7 @@
                         }
                     }
 
-                    // Remove momentum classes
+                    // Remove momentum classes only
                     var classes = el.getAttribute('class');
                     if (classes) {
                         classes = classes
@@ -225,13 +269,85 @@
                     $w.removeData('m4-init');
                     setTimeout(function() { M.setup(); }, 500);
                 }
-            } catch(e) {
-                console.warn('[Momentum] handleReset error:', e);
-            }
+            } catch(e) {}
         },
 
         // ============================================
-        // DOM WATCHER - Improved stability
+        // AUTO-SYNC EVERY 5 SECONDS
+        // ============================================
+        startAutoSync: function($w, wid) {
+            var self = this;
+
+            // Don't start duplicate timers
+            if (self._autoSyncTimers[wid]) return;
+
+            self._autoSyncTimers[wid] = setInterval(function() {
+                try {
+                    var $widget = $('.momentum-html-output[data-widget-id="' + wid + '"]');
+                    if (!$widget.length || !$widget.data('auto-sync')) {
+                        // Widget removed or auto-sync disabled - clear timer
+                        clearInterval(self._autoSyncTimers[wid]);
+                        delete self._autoSyncTimers[wid];
+                        return;
+                    }
+
+                    // Clone and clean
+                    var $clone = $widget.clone();
+                    $clone.find('.m-badge, #m-toolbar, #m-link-editor, .m-img-bar, .m-box-bar, .m-resize-h, .m-notify').remove();
+                    $clone.find('style.momentum-custom-css, style.momentum-responsive-css').remove();
+
+                    $clone.find('*').addBack().each(function() {
+                        var el = this;
+                        el.removeAttribute('contenteditable');
+
+                        var attrsToRemove = [];
+                        for (var i = 0; i < el.attributes.length; i++) {
+                            var name = el.attributes[i].name;
+                            if (name.indexOf('data-m4-') === 0 ||
+                                name.indexOf('data-m-') === 0 ||
+                                name === 'data-m3' ||
+                                name === 'data-m4-init' ||
+                                name === 'data-auto-sync') {
+                                attrsToRemove.push(name);
+                            }
+                        }
+                        for (var j = 0; j < attrsToRemove.length; j++) {
+                            el.removeAttribute(attrsToRemove[j]);
+                        }
+
+                        var style = el.getAttribute('style');
+                        if (style) {
+                            var cs = this === $clone[0] ? '' : cleanEditorStyles(style);
+                            if (cs) el.setAttribute('style', cs);
+                            else el.removeAttribute('style');
+                        }
+
+                        var classes = el.getAttribute('class');
+                        if (classes) {
+                            classes = classes.replace(/\bmomentum-editable\b/g, '').replace(/\bmomentum-html-output\b/g, '').replace(/\s+/g, ' ').trim();
+                            if (classes) el.setAttribute('class', classes);
+                            else el.removeAttribute('class');
+                        }
+                    });
+
+                    $clone.removeAttr('data-widget-id');
+                    var html = $clone.html();
+
+                    if (html && html.trim()) {
+                        window.parent.postMessage({
+                            type: 'momentum-auto-sync-tick',
+                            widgetId: wid,
+                            html: html
+                        }, '*');
+                    }
+                } catch(e) {
+                    console.warn('[Momentum] Auto-sync tick error:', e);
+                }
+            }, 5000);
+        },
+
+        // ============================================
+        // DOM WATCHER
         // ============================================
         watchDOM: function() {
             var self = this;
@@ -247,7 +363,6 @@
                     for (var i = 0; i < mutations.length; i++) {
                         var mutation = mutations[i];
 
-                        // Skip mutations from our own toolbar/badge elements
                         if (mutation.target && $(mutation.target).closest('#m-toolbar, .m-badge, .m-img-bar, .m-box-bar, .m-notify, #m-link-editor').length) {
                             continue;
                         }
@@ -256,7 +371,6 @@
                         for (var j = 0; j < added.length; j++) {
                             var node = added[j];
                             if (node.nodeType === 1) {
-                                // Skip our own injected elements
                                 var $node = $(node);
                                 if ($node.hasClass('m-badge') || $node.hasClass('m-notify') ||
                                     $node.attr('id') === 'm-toolbar' || $node.attr('id') === 'm-link-editor' ||
@@ -273,9 +387,7 @@
                         }
                         if (dominated) break;
                     }
-                } catch(e) {
-                    console.warn('[Momentum] MutationObserver error:', e);
-                }
+                } catch(e) {}
 
                 if (dominated) {
                     if (self._rescanTimer) clearTimeout(self._rescanTimer);
@@ -292,7 +404,7 @@
         },
 
         // ============================================
-        // SETUP WIDGETS - Improved stability
+        // SETUP WIDGETS
         // ============================================
         setup: function() {
             if (this.setupRunning) return;
@@ -311,12 +423,16 @@
 
                     console.log('[Momentum] Setting up widget:', wid);
 
-                    // Wrap each setup in try-catch for stability
                     try { self.makeEditable($w, wid); } catch(e) { console.warn('[Momentum] makeEditable error:', e); }
                     try { self.setupImages($w, wid); } catch(e) { console.warn('[Momentum] setupImages error:', e); }
                     try { self.setupLinks($w, wid); } catch(e) { console.warn('[Momentum] setupLinks error:', e); }
                     try { self.setupBoxes($w, wid); } catch(e) { console.warn('[Momentum] setupBoxes error:', e); }
                     try { self.addBadge($w); } catch(e) { console.warn('[Momentum] addBadge error:', e); }
+
+                    // Start auto-sync if enabled
+                    if ($w.attr('data-auto-sync') === '1') {
+                        self.startAutoSync($w, wid);
+                    }
                 });
             } catch(e) {
                 console.error('[Momentum] Setup error:', e);
@@ -326,7 +442,7 @@
         },
 
         // ============================================
-        // BADGE - Improved with Momentum branding
+        // BADGE
         // ============================================
         addBadge: function($w) {
             if ($w.find('.m-badge').length) return;
@@ -338,13 +454,13 @@
                 pointerEvents: 'none', fontFamily: 'sans-serif',
                 boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
                 display: 'flex', alignItems: 'center', gap: '4px'
-            }).html('<svg width="12" height="12" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="10" r="10" fill="rgba(255,255,255,0.3)"/><text x="10" y="14" text-anchor="middle" fill="#fff" font-size="12" font-weight="bold">M</text></svg> Momentum Pro v5');
+            }).html('<svg width="12" height="12" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="10" r="10" fill="rgba(255,255,255,0.3)"/><text x="10" y="14" text-anchor="middle" fill="#fff" font-size="12" font-weight="bold">M</text></svg> Momentum Pro v6');
             $w.css('position', 'relative');
             $w.prepend($badge);
         },
 
         // ============================================
-        // MAKE TEXT EDITABLE
+        // MAKE TEXT EDITABLE - Each element is independent
         // ============================================
         makeEditable: function($w, wid) {
             var self = this;
@@ -366,6 +482,7 @@
                 if ($el.data('m4-text')) return;
                 if (self.isIcon(el)) return;
 
+                // Check if this element has direct text content
                 var hasText = false;
                 for (var i = 0; i < el.childNodes.length; i++) {
                     if (el.childNodes[i].nodeType === 3 && el.childNodes[i].textContent.trim().length > 0) {
@@ -380,27 +497,27 @@
                 $el.css({ cursor: 'text', outline: 'none' });
 
                 if (tag === 'a') {
-                    $el.on('click.m4', function(e) { e.preventDefault(); });
+                    $el.on('click.m6', function(e) { e.preventDefault(); });
                 }
 
-                $el.on('mouseenter.m4', function(e) {
+                $el.on('mouseenter.m6', function(e) {
                     e.stopPropagation();
                     if (!$(this).is(':focus')) {
                         $(this).css({ outline: '2px dashed rgba(108,99,255,0.4)', outlineOffset: '2px' });
                     }
-                }).on('mouseleave.m4', function() {
+                }).on('mouseleave.m6', function() {
                     if (!$(this).is(':focus')) {
                         $(this).css('outline', 'none');
                     }
                 });
 
-                $el.on('focus.m4', function(e) {
+                $el.on('focus.m6', function(e) {
                     e.stopPropagation();
                     $(this).css({ outline: '2px solid #6C63FF', outlineOffset: '3px' });
                     self.showToolbar($(this), wid);
                 });
 
-                $el.on('blur.m4', function() {
+                $el.on('blur.m6', function() {
                     var $this = $(this);
                     $this.css('outline', 'none');
                     setTimeout(function() {
@@ -427,7 +544,7 @@
         },
 
         // ============================================
-        // TOOLBAR - Improved stability
+        // TOOLBAR - With proper selection preservation for links
         // ============================================
         isToolbarActive: function() {
             if (!this._$toolbar) return false;
@@ -460,7 +577,7 @@
                 maxWidth: '620px'
             }).on('mousedown', function(e) {
                 if (!$(e.target).is('input')) {
-                    e.preventDefault();
+                    e.preventDefault(); // Prevents blur = keeps selection alive
                 }
             });
 
@@ -481,7 +598,7 @@
             var $strike = this.btn('S', 'Strikethrough').css('textDecoration', 'line-through');
             $strike.on('mousedown', function(e) { e.preventDefault(); document.execCommand('strikeThrough'); });
 
-            // Text Color
+            // Text Color - works on selection
             var $tcLabel = $('<span>').css({ color: '#aaa', fontSize: '10px', marginRight: '2px' }).text('لون');
             var $tc = $('<input type="color">').val(self.rgbToHex($el.css('color') || '#333')).css({
                 width: '28px', height: '24px', border: 'none', borderRadius: '4px',
@@ -489,12 +606,17 @@
             });
             $tc.on('input', function() {
                 var c = $(this).val();
+                self.restoreSelection();
                 var sel = window.getSelection();
                 if (sel && sel.rangeCount > 0 && !sel.getRangeAt(0).collapsed) {
                     document.execCommand('foreColor', false, c);
                 } else {
                     $el.css('color', c);
                 }
+            });
+            // Save selection before color picker opens
+            $tc.on('mousedown', function() {
+                self.saveSelection();
             });
 
             // BG Color
@@ -505,12 +627,16 @@
             });
             $bg.on('input', function() {
                 var c = $(this).val();
+                self.restoreSelection();
                 var sel = window.getSelection();
                 if (sel && sel.rangeCount > 0 && !sel.getRangeAt(0).collapsed) {
                     document.execCommand('hiliteColor', false, c);
                 } else {
                     $el.css('background-color', c);
                 }
+            });
+            $bg.on('mousedown', function() {
+                self.saveSelection();
             });
 
             // Remove Format
@@ -519,7 +645,7 @@
 
             $row1.append($bold, $italic, $underline, $strike, s(), $tcLabel, $tc, s(), $bgLabel, $bg, s(), $rf);
 
-            // ===== ROW 2: Block level =====
+            // ===== ROW 2: Block level + Link =====
             var $row2 = $('<div>').css({
                 display: 'flex', gap: '3px', alignItems: 'center', flexWrap: 'wrap',
                 marginTop: '4px', paddingTop: '4px', borderTop: '1px solid #333'
@@ -588,10 +714,11 @@
                 $lhL.text(lh.toFixed(1));
             });
 
-            // Link button
-            var $link = this.btn('🔗', 'إضافة رابط');
+            // LINK BUTTON - Fixed: saves selection before opening popup
+            var $link = this.btn('🔗', 'إضافة رابط للنص المحدد');
             $link.on('mousedown', function(e) {
                 e.preventDefault();
+                self.saveSelection(); // CRITICAL: save selection before anything
                 self.addLinkToSelection($el, wid);
             });
 
@@ -668,23 +795,32 @@
             }
         },
 
+        // ============================================
+        // LINK TO SELECTION - COMPLETELY REWRITTEN
+        // ============================================
         addLinkToSelection: function($el, wid) {
             var self = this;
 
+            // If element itself is a link
             if ($el.is('a')) {
                 self.showLinkPopup($el, wid);
                 return;
             }
 
+            // Check if we have saved selection with text
             var sel = window.getSelection();
-            var text = sel ? sel.toString().trim() : '';
+            var text = '';
+            if (self._savedSelection && !self._savedSelection.collapsed) {
+                text = self._savedSelection.toString().trim();
+            } else if (sel && sel.rangeCount > 0) {
+                text = sel.toString().trim();
+            }
 
             if (!text) {
-                self.notify('⚠️ حدد نص أولاً');
+                self.notify('⚠️ حدد نص أولاً عشان تربطه برابط');
                 return;
             }
 
-            // Use nice popup instead of prompt
             self.showLinkCreator($el, wid, text);
         },
 
@@ -702,16 +838,20 @@
                 background: '#1a1a2e', borderRadius: '12px', padding: '16px',
                 boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
                 border: '1px solid rgba(108,99,255,0.3)',
-                width: '300px', fontFamily: 'sans-serif'
-            }).on('mousedown', function(e) { e.stopPropagation(); });
+                width: '320px', fontFamily: 'sans-serif'
+            }).on('mousedown', function(e) {
+                e.stopPropagation();
+                // Don't prevent default here so inputs work
+            });
 
             $ed.html(
                 '<div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;">' +
                 '<span style="color:#6C63FF;font-size:16px;">🔗</span>' +
                 '<span style="color:#6C63FF;font-weight:700;font-size:14px;">إضافة رابط</span>' +
                 '</div>' +
-                '<label style="color:#aaa;font-size:11px;display:block;margin-bottom:10px;">النص المحدد<input type="text" id="ml-txt" value="' + self.escAttr(selectedText) + '" style="' + is + '" readonly></label>' +
+                '<label style="color:#aaa;font-size:11px;display:block;margin-bottom:10px;">النص المحدد<div style="' + is + 'background:#1a1a2e;margin-top:4px;min-height:20px;padding:8px 12px;" id="ml-txt-display">' + self.escHtml(selectedText) + '</div></label>' +
                 '<label style="color:#aaa;font-size:11px;display:block;margin-bottom:10px;">URL<input type="url" id="ml-url" value="" placeholder="https://example.com" style="' + is + '"></label>' +
+                '<label style="color:#aaa;font-size:11px;display:block;margin-bottom:10px;">لون الرابط<div style="display:flex;gap:8px;align-items:center;margin-top:4px;"><input type="color" id="ml-color" value="#6C63FF" style="width:36px;height:28px;border:none;border-radius:4px;cursor:pointer;background:transparent;padding:0;"><span id="ml-color-label" style="color:#fff;font-size:12px;">#6C63FF</span></div></label>' +
                 '<label style="color:#aaa;font-size:11px;display:flex;align-items:center;gap:8px;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="ml-blank" checked> فتح في تاب جديد</label>' +
                 '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
                 '<button id="ml-x" style="padding:7px 14px;border:none;border-radius:6px;background:#333;color:#fff;cursor:pointer;">إلغاء</button>' +
@@ -720,21 +860,42 @@
             );
 
             $('body').append($ed);
-            $ed.find('#ml-url').focus();
+
+            // Color picker label update
+            $ed.find('#ml-color').on('input', function() {
+                $ed.find('#ml-color-label').text($(this).val());
+            });
 
             $ed.find('#ml-ok').on('click', function() {
                 var url = $ed.find('#ml-url').val().trim();
                 var bl = $ed.find('#ml-blank').is(':checked');
+                var linkColor = $ed.find('#ml-color').val();
 
                 if (!url) { self.notify('⚠️ أدخل رابط'); return; }
 
+                // CRITICAL: Restore the saved selection before executing command
+                self.restoreSelection();
+
+                var sel = window.getSelection();
+                if (!sel || sel.rangeCount === 0 || sel.getRangeAt(0).collapsed) {
+                    self.notify('⚠️ فقد التحديد - حدد النص مرة تانية');
+                    $ed.remove();
+                    return;
+                }
+
                 document.execCommand('createLink', false, url);
+
+                // Find newly created link and style it
                 $el.find('a[href="' + url + '"]').each(function() {
+                    var $a = $(this);
                     if (bl) {
-                        $(this).attr('target', '_blank').attr('rel', 'noopener noreferrer');
+                        $a.attr('target', '_blank').attr('rel', 'noopener noreferrer');
+                    }
+                    if (linkColor) {
+                        $a.css('color', linkColor);
                     }
                     // Setup link editing
-                    $(this).data('m4-link', true).on('dblclick.m4', function(e) {
+                    $a.data('m4-link', true).on('dblclick.m6', function(e) {
                         e.preventDefault();
                         e.stopPropagation();
                         self.showLinkPopup($(this), wid);
@@ -742,23 +903,32 @@
                 });
 
                 $ed.remove();
+                self.clearSavedSelection();
                 self.notify('🔗 تم إضافة الرابط!');
             });
 
-            $ed.find('#ml-x').on('click', function() { $ed.remove(); });
+            $ed.find('#ml-x').on('click', function() {
+                $ed.remove();
+                self.clearSavedSelection();
+            });
 
-            // Enter key to submit
             $ed.find('#ml-url').on('keydown', function(e) {
                 if (e.key === 'Enter') {
                     $ed.find('#ml-ok').trigger('click');
                 }
             });
 
+            // Focus on URL input without losing selection
             setTimeout(function() {
-                $(document).on('click.mlink5', function(e) {
+                $ed.find('#ml-url')[0].focus({ preventScroll: true });
+            }, 50);
+
+            setTimeout(function() {
+                $(document).on('click.mlink6', function(e) {
                     if (!$(e.target).closest('#m-link-editor').length) {
                         $ed.remove();
-                        $(document).off('click.mlink5');
+                        self.clearSavedSelection();
+                        $(document).off('click.mlink6');
                     }
                 });
             }, 200);
@@ -773,7 +943,7 @@
                 var $a = $(this);
                 if ($a.data('m4-link')) return;
                 $a.data('m4-link', true);
-                $a.on('dblclick.m4', function(e) {
+                $a.on('dblclick.m6', function(e) {
                     e.preventDefault();
                     e.stopPropagation();
                     self.showLinkPopup($(this), wid);
@@ -849,7 +1019,6 @@
 
             $ed.find('#ml-x').on('click', function() { $ed.remove(); });
 
-            // Enter to save
             $ed.find('#ml-url, #ml-txt').on('keydown', function(e) {
                 if (e.key === 'Enter') {
                     $ed.find('#ml-ok').trigger('click');
@@ -857,17 +1026,17 @@
             });
 
             setTimeout(function() {
-                $(document).on('click.mlink5', function(e) {
+                $(document).on('click.mlink6', function(e) {
                     if (!$(e.target).closest('#m-link-editor').length) {
                         $ed.remove();
-                        $(document).off('click.mlink5');
+                        $(document).off('click.mlink6');
                     }
                 });
             }, 200);
         },
 
         // ============================================
-        // IMAGES
+        // IMAGES - Each image handled independently
         // ============================================
         setupImages: function($w, wid) {
             var self = this;
@@ -879,17 +1048,17 @@
                 $img.attr('contenteditable', 'false');
                 $img.css({ cursor: 'pointer', transition: 'outline 0.15s' });
 
-                $img.on('mouseenter.m4', function() {
+                $img.on('mouseenter.m6', function() {
                     if (!$(this).data('m4-isel')) {
                         $(this).css({ outline: '3px solid rgba(108,99,255,0.5)', outlineOffset: '3px' });
                     }
-                }).on('mouseleave.m4', function() {
+                }).on('mouseleave.m6', function() {
                     if (!$(this).data('m4-isel')) {
                         $(this).css('outline', 'none');
                     }
                 });
 
-                $img.on('click.m4', function(e) {
+                $img.on('click.m6', function(e) {
                     e.preventDefault();
                     e.stopPropagation();
                     try { window.getSelection().removeAllRanges(); } catch(ex) {}
@@ -977,11 +1146,11 @@
             $('body').append($bar);
 
             setTimeout(function() {
-                $(document).on('click.mimg5', function(e) {
+                $(document).on('click.mimg6', function(e) {
                     if (!$(e.target).closest('.m-img-bar').length && !$(e.target).is($img[0])) {
                         $img.removeData('m4-isel').css('outline', 'none');
                         $('.m-img-bar').remove();
-                        $(document).off('click.mimg5');
+                        $(document).off('click.mimg6');
                     }
                 });
             }, 100);
@@ -991,7 +1160,6 @@
             var self = this;
             $('#m-link-editor').remove();
 
-            // Check if image is already wrapped in <a>
             var $parent = $img.parent();
             var isLinked = $parent.is('a');
             var currentHref = isLinked ? ($parent.attr('href') || '') : '';
@@ -1012,13 +1180,13 @@
             $ed.html(
                 '<div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;">' +
                 '<span style="color:#6C63FF;font-size:16px;">🔗</span>' +
-                '<span style="color:#6C63FF;font-weight:700;font-size:14px;">ربط الصورة برابط</span>' +
+                '<span style="color:#6C63FF;font-weight:700;font-size:14px;">' + (isLinked ? 'تعديل رابط الصورة' : 'ربط الصورة برابط') + '</span>' +
                 '</div>' +
                 '<label style="color:#aaa;font-size:11px;display:block;margin-bottom:10px;">URL<input type="url" id="ml-url" value="' + self.escAttr(currentHref) + '" placeholder="https://example.com" style="' + is + '"></label>' +
                 '<label style="color:#aaa;font-size:11px;display:flex;align-items:center;gap:8px;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="ml-blank" checked> فتح في تاب جديد</label>' +
                 '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
                 '<button id="ml-x" style="padding:7px 14px;border:none;border-radius:6px;background:#333;color:#fff;cursor:pointer;">إلغاء</button>' +
-                (isLinked ? '<button id="ml-del" style="padding:7px 14px;border:none;border-radius:6px;background:#e74c3c;color:#fff;cursor:pointer;">حذف الرابط</button>' : '') +
+                (isLinked ? '<button id="ml-del" style="padding:7px 14px;border:none;border-radius:6px;background:#e74c3c;color:#fff;cursor:pointer;">حذف</button>' : '') +
                 '<button id="ml-ok" style="padding:7px 14px;border:none;border-radius:6px;background:#6C63FF;color:#fff;cursor:pointer;font-weight:600;">حفظ</button>' +
                 '</div>'
             );
@@ -1037,13 +1205,13 @@
                     if (bl) { $parent.attr('target', '_blank').attr('rel', 'noopener noreferrer'); }
                     else { $parent.removeAttr('target').removeAttr('rel'); }
                 } else {
-                    var $link = $('<a>').attr('href', url);
-                    if (bl) { $link.attr('target', '_blank').attr('rel', 'noopener noreferrer'); }
-                    $img.wrap($link);
+                    var $a = $('<a>').attr('href', url);
+                    if (bl) { $a.attr('target', '_blank').attr('rel', 'noopener noreferrer'); }
+                    $img.wrap($a);
                 }
 
                 $ed.remove();
-                self.notify('🔗 تم ربط الصورة!');
+                self.notify('🔗 تم الحفظ!');
             });
 
             if (isLinked) {
@@ -1057,267 +1225,213 @@
             $ed.find('#ml-x').on('click', function() { $ed.remove(); });
 
             $ed.find('#ml-url').on('keydown', function(e) {
-                if (e.key === 'Enter') $ed.find('#ml-ok').trigger('click');
+                if (e.key === 'Enter') { $ed.find('#ml-ok').trigger('click'); }
             });
 
             setTimeout(function() {
-                $(document).on('click.mlink5', function(e) {
+                $(document).on('click.mlink6', function(e) {
                     if (!$(e.target).closest('#m-link-editor').length) {
                         $ed.remove();
-                        $(document).off('click.mlink5');
+                        $(document).off('click.mlink6');
                     }
                 });
             }, 200);
         },
 
         // ============================================
-        // BOX EDITING (right-click) - Enhanced
+        // BOXES (div, section) - Right-click menu
         // ============================================
         setupBoxes: function($w, wid) {
             var self = this;
-            $w.find('div, section, article, header, footer, ul, ol, table, blockquote, nav, main, aside').each(function() {
+            $w.find('div, section').each(function() {
                 var $box = $(this);
+                if ($box.hasClass('momentum-html-output')) return;
+                if ($box.hasClass('m-badge') || $box.hasClass('m-notify')) return;
                 if ($box.data('m4-box')) return;
-                if ($box.hasClass('momentum-html-output') || $box.hasClass('m-badge')) return;
-                if ($box.closest('#m-toolbar, #m-link-editor, .m-img-bar, .m-box-bar').length) return;
                 $box.data('m4-box', true);
 
-                $box.on('contextmenu.m4', function(e) {
-                    if (e.target !== this && !$(e.target).is('div, section, article, header, footer, nav, main, aside')) return;
+                $box.on('contextmenu.m6', function(e) {
                     e.preventDefault();
                     e.stopPropagation();
-                    self.showBoxBar($(this), wid);
-                });
-
-                $box.on('mouseenter.m4', function(e) {
-                    e.stopPropagation();
-                    if (!$(this).data('m4-bsel')) $(this).css({ outline: '1px dashed rgba(255,152,0,0.35)', outlineOffset: '1px' });
-                }).on('mouseleave.m4', function() {
-                    if (!$(this).data('m4-bsel')) $(this).css('outline', 'none');
+                    self.selectBox($(this), wid, e);
                 });
             });
         },
 
-        showBoxBar: function($box, wid) {
+        selectBox: function($box, wid, e) {
             var self = this;
-            this.hideToolbar();
-            $('.m-box-bar, .m-img-bar').remove();
+
+            $('[data-m4-bsel]').removeData('m4-bsel').css('outline', 'none');
+            $('.m-box-bar').remove();
 
             $box.data('m4-bsel', true);
-            $box.css({ outline: '2px solid #FF9800', outlineOffset: '2px' });
-            var off = $box.offset();
+            $box.css({ outline: '2px solid #4CAF50', outlineOffset: '2px' });
 
             var $bar = $('<div class="m-box-bar">').css({
                 position: 'absolute', zIndex: 999999,
-                top: Math.max(5, off.top - 48) + 'px',
-                left: Math.max(10, off.left) + 'px',
-                background: '#1a1a2e', borderRadius: '10px', padding: '5px 8px',
-                display: 'flex', gap: '4px', alignItems: 'center',
+                top: (e.pageY + 5) + 'px',
+                left: (e.pageX + 5) + 'px',
+                background: '#1a1a2e', borderRadius: '10px', padding: '8px',
                 boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-                border: '1px solid rgba(255,152,0,0.4)',
-                flexWrap: 'wrap', maxWidth: '540px'
-            }).on('mousedown', function(e) { e.preventDefault(); });
+                border: '1px solid rgba(76,175,80,0.3)',
+                fontFamily: 'sans-serif', minWidth: '200px'
+            }).on('mousedown', function(e) { e.stopPropagation(); });
 
-            var tag = $box.prop('tagName').toLowerCase();
-            var $label = $('<span>').css({ color: '#FF9800', fontSize: '11px', fontWeight: '600', padding: '0 6px', fontFamily: 'monospace' }).text(tag);
-            var s = function() { return self.sep(); };
+            var mItem = function(label, icon, fn) {
+                var $item = $('<div>').css({
+                    color: '#fff', fontSize: '12px', padding: '6px 10px',
+                    borderRadius: '6px', cursor: 'pointer', display: 'flex',
+                    alignItems: 'center', gap: '8px', transition: 'background 0.15s'
+                }).html('<span style="font-size:14px;">' + icon + '</span> ' + label)
+                .on('mouseenter', function() { $(this).css('background', '#2a2a3e'); })
+                .on('mouseleave', function() { $(this).css('background', 'transparent'); })
+                .on('click', function() {
+                    fn();
+                    $bar.remove();
+                    $box.removeData('m4-bsel').css('outline', 'none');
+                });
+                return $item;
+            };
 
-            // Duplicate
-            var $dup = this.btn('⧉', 'نسخ');
-            $dup.on('mousedown', function(e) {
-                e.preventDefault();
-                try {
-                    var $clone = $box.clone(true);
-                    $clone.find('*').addBack().removeData();
-                    $box.after($clone);
-                    setTimeout(function() {
-                        var $w2 = $clone.closest('.momentum-html-output');
-                        self.makeEditable($w2, wid);
-                        self.setupImages($w2, wid);
-                        self.setupLinks($w2, wid);
-                        self.setupBoxes($w2, wid);
-                    }, 100);
-                    self.notify('تم النسخ');
-                } catch(e) {
-                    self.notify('❌ خطأ في النسخ');
-                }
-            });
-
-            // Delete
-            var $del = this.btn('🗑', 'حذف').css('background', '#5c1a1a');
-            $del.on('mousedown', function(e) {
-                e.preventDefault();
-                if (confirm('حذف هذا العنصر؟')) {
-                    $box.fadeOut(200, function() { $(this).remove(); });
-                    $('.m-box-bar').remove();
-                    self.notify('تم الحذف');
-                }
-            });
+            // Background color
+            $bar.append(mItem('لون الخلفية', '🎨', function() {
+                var $input = $('<input type="color" value="' + (self.rgbToHex($box.css('background-color') || '#ffffff')) + '">').css({ position: 'fixed', top: '-100px' });
+                $('body').append($input);
+                $input.on('input', function() { $box.css('background-color', $(this).val()); });
+                $input.on('change', function() { $(this).remove(); });
+                $input[0].click();
+            }));
 
             // Padding
-            var pad = parseInt($box.css('padding-top')) || 0;
-            var $pD = this.btn('P−', 'تقليل المسافة الداخلية');
-            var $pL = $('<span>').css({ color: '#aaa', fontSize: '10px', minWidth: '24px', textAlign: 'center', display: 'inline-block' }).text(pad);
-            var $pU = this.btn('P+', 'زيادة المسافة الداخلية');
+            $bar.append(mItem('زيادة المسافة الداخلية', '⬜', function() {
+                var p = parseInt($box.css('padding')) || 0;
+                $box.css('padding', (p + 10) + 'px');
+            }));
 
-            $pD.on('mousedown', function(e) { e.preventDefault(); pad = Math.max(0, pad - 5); $box.css('padding', pad + 'px'); $pL.text(pad); });
-            $pU.on('mousedown', function(e) { e.preventDefault(); pad += 5; $box.css('padding', pad + 'px'); $pL.text(pad); });
+            $bar.append(mItem('تقليل المسافة الداخلية', '🔲', function() {
+                var p = parseInt($box.css('padding')) || 0;
+                $box.css('padding', Math.max(0, p - 10) + 'px');
+            }));
 
-            // Margin
-            var mar = parseInt($box.css('margin-top')) || 0;
-            var $mD = this.btn('M−', 'تقليل المسافة الخارجية');
-            var $mL = $('<span>').css({ color: '#aaa', fontSize: '10px', minWidth: '24px', textAlign: 'center', display: 'inline-block' }).text(mar);
-            var $mU = this.btn('M+', 'زيادة المسافة الخارجية');
+            // Border radius
+            $bar.append(mItem('حواف دائرية', '◯', function() {
+                var br = parseInt($box.css('border-radius')) || 0;
+                $box.css('border-radius', (br + 8) + 'px');
+            }));
 
-            $mD.on('mousedown', function(e) { e.preventDefault(); mar = Math.max(0, mar - 5); $box.css('margin', mar + 'px'); $mL.text(mar); });
-            $mU.on('mousedown', function(e) { e.preventDefault(); mar += 5; $box.css('margin', mar + 'px'); $mL.text(mar); });
+            // Border
+            $bar.append(mItem('إضافة بوردر', '🔳', function() {
+                $box.css('border', '1px solid #ddd');
+            }));
 
-            // BG Color
-            var $bgL = $('<span>').css({ color: '#aaa', fontSize: '10px' }).text('BG:');
-            var $bgC = $('<input type="color">').val(self.rgbToHex($box.css('background-color') || '#fff')).css({
-                width: '28px', height: '24px', border: 'none', borderRadius: '4px', cursor: 'pointer', background: 'transparent'
-            });
-            $bgC.on('input', function() { $box.css('background-color', $(this).val()); });
+            // Remove border
+            $bar.append(mItem('إزالة البوردر', '✕', function() {
+                $box.css('border', 'none');
+            }));
 
-            // Border Radius
-            var brd = parseInt($box.css('border-radius')) || 0;
-            var $bD = this.btn('R−', 'تقليل الحواف');
-            var $bL = $('<span>').css({ color: '#aaa', fontSize: '10px', minWidth: '22px', textAlign: 'center', display: 'inline-block' }).text(brd);
-            var $bU = this.btn('R+', 'زيادة الحواف');
+            // Tag label
+            var tag = ($box.prop('tagName') || '').toLowerCase();
+            $bar.append($('<div>').css({
+                color: '#4CAF50', fontSize: '9px', fontFamily: 'monospace',
+                textAlign: 'center', padding: '4px', marginTop: '4px',
+                borderTop: '1px solid #333'
+            }).text('<' + tag + '>'));
 
-            $bD.on('mousedown', function(e) { e.preventDefault(); brd = Math.max(0, brd - 2); $box.css('border-radius', brd + 'px'); $bL.text(brd); });
-            $bU.on('mousedown', function(e) { e.preventDefault(); brd += 2; $box.css('border-radius', brd + 'px'); $bL.text(brd); });
-
-            // Link for box
-            var $boxLink = this.btn('🔗', 'ربط بالكامل');
-            $boxLink.on('mousedown', function(e) {
-                e.preventDefault();
-                var url = prompt('أدخل الرابط:', 'https://');
-                if (url) {
-                    $box.css('cursor', 'pointer');
-                    $box.off('click.m4link').on('click.m4link', function() {
-                        window.open(url, '_blank');
-                    });
-                    $box.attr('data-href', url);
-                    self.notify('🔗 تم الربط!');
-                }
-            });
-
-            $bar.append($label, s(), $dup, $del, s(), $pD, $pL, $pU, s(), $mD, $mL, $mU, s(), $bgL, $bgC, s(), $bD, $bL, $bU, s(), $boxLink);
             $('body').append($bar);
 
-            $(document).on('click.mbox5', function(e) {
-                if (!$(e.target).closest('.m-box-bar').length && !$(e.target).is($box[0])) {
-                    $box.removeData('m4-bsel').css('outline', 'none');
-                    $('.m-box-bar').remove();
-                    $(document).off('click.mbox5');
-                }
-            });
+            setTimeout(function() {
+                $(document).on('click.mbox6', function(e) {
+                    if (!$(e.target).closest('.m-box-bar').length) {
+                        $box.removeData('m4-bsel').css('outline', 'none');
+                        $('.m-box-bar').remove();
+                        $(document).off('click.mbox6');
+                    }
+                });
+            }, 100);
         },
 
         // ============================================
-        // UTILITY
+        // UTILITY FUNCTIONS
         // ============================================
-        btn: function(text, title, active) {
-            return $('<button type="button">').text(text).attr('title', title || '').css({
-                background: active ? '#6C63FF' : '#2a2a3e',
-                color: '#fff', border: 'none', borderRadius: '6px',
-                padding: '4px 8px', cursor: 'pointer', fontSize: '12px',
-                fontFamily: 'sans-serif', minWidth: '26px', height: '26px',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                transition: 'background 0.15s'
-            }).on('mouseenter', function() {
-                if (!$(this).data('active')) $(this).css('background', '#333');
+        btn: function(label, title, active) {
+            var bg = active ? '#6C63FF' : '#2a2a3e';
+            return $('<span>').css({
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                minWidth: '26px', height: '24px', background: bg,
+                color: '#fff', fontSize: '11px', borderRadius: '4px',
+                cursor: 'pointer', padding: '0 4px', transition: 'background 0.15s',
+                userSelect: 'none', fontFamily: 'sans-serif'
+            }).text(label).attr('title', title || '')
+            .on('mouseenter', function() {
+                if (!active) $(this).css('background', '#3a3a5e');
             }).on('mouseleave', function() {
-                if (!$(this).data('active')) $(this).css('background', '#2a2a3e');
+                if (!active) $(this).css('background', bg);
             });
         },
 
         sep: function() {
-            return $('<div>').css({ width: '1px', height: '20px', background: '#333', margin: '0 2px', flexShrink: '0' });
-        },
-
-        rgbToHex: function(rgb) {
-            if (!rgb || rgb === 'transparent' || rgb === 'rgba(0, 0, 0, 0)') return '#ffffff';
-            if (rgb.charAt(0) === '#') return rgb;
-            var m = rgb.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-            if (!m) return '#ffffff';
-            return '#' + ((1 << 24) + (parseInt(m[1]) << 16) + (parseInt(m[2]) << 8) + parseInt(m[3])).toString(16).slice(1);
-        },
-
-        escAttr: function(s) {
-            if (!s) return '';
-            return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            return $('<span>').css({
+                width: '1px', height: '18px', background: '#333',
+                display: 'inline-block', margin: '0 2px'
+            });
         },
 
         notify: function(msg) {
+            $('.m-notify').remove();
+            var $n = $('<div class="m-notify">').css({
+                position: 'fixed', bottom: '20px', left: '50%',
+                transform: 'translateX(-50%)', background: '#1a1a2e',
+                color: '#fff', padding: '10px 20px', borderRadius: '8px',
+                fontSize: '13px', fontFamily: 'sans-serif', zIndex: 999999,
+                boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+                border: '1px solid rgba(108,99,255,0.3)'
+            }).text(msg);
+            $('body').append($n);
+            setTimeout(function() { $n.fadeOut(300, function() { $(this).remove(); }); }, 2500);
+        },
+
+        rgbToHex: function(rgb) {
+            if (!rgb) return '#333333';
+            if (rgb.charAt(0) === '#') return rgb;
             try {
-                $('.m-notify').remove();
-                var $n = $('<div class="m-notify">').css({
-                    position: 'fixed', bottom: '20px', left: '50%',
-                    transform: 'translateX(-50%)', background: '#1a1a2e',
-                    color: '#fff', padding: '12px 24px', borderRadius: '10px',
-                    boxShadow: '0 4px 20px rgba(0,0,0,0.3)', zIndex: 9999999,
-                    fontFamily: 'sans-serif', fontSize: '13px', fontWeight: '600',
-                    border: '1px solid rgba(108,99,255,0.3)',
-                    display: 'flex', alignItems: 'center', gap: '8px'
-                }).html('<svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="10" r="10" fill="#6C63FF"/><text x="10" y="14" text-anchor="middle" fill="#fff" font-size="11" font-weight="bold">M</text></svg> ' + msg);
-                $('body').append($n);
-                setTimeout(function() { $n.fadeOut(300, function() { $n.remove(); }); }, 2500);
-            } catch(e) {}
+                var parts = rgb.match(/\d+/g);
+                if (!parts || parts.length < 3) return '#333333';
+                var hex = '#';
+                for (var i = 0; i < 3; i++) {
+                    hex += ('0' + parseInt(parts[i]).toString(16)).slice(-2);
+                }
+                return hex;
+            } catch(e) {
+                return '#333333';
+            }
+        },
+
+        escAttr: function(str) {
+            return (str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        },
+
+        escHtml: function(str) {
+            return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
     };
 
-    /**
-     * Clean editor-only styles from a style string
-     */
-    function cleanEditorStyles(style) {
-        if (!style) return '';
-
-        var props = style.split(';');
-        var clean = [];
-
-        for (var i = 0; i < props.length; i++) {
-            var prop = props[i].trim();
-            if (!prop) continue;
-
-            var isEditorProp = false;
-
-            for (var j = 0; j < EDITOR_ONLY_STYLES.length; j++) {
-                if (prop.toLowerCase().indexOf(EDITOR_ONLY_STYLES[j]) === 0) {
-                    isEditorProp = true;
-                    break;
-                }
-            }
-
-            if (!isEditorProp && /^\s*cursor\s*:\s*text\s*$/i.test(prop)) {
-                isEditorProp = true;
-            }
-
-            if (!isEditorProp) {
-                clean.push(prop);
-            }
-        }
-
-        return clean.join('; ');
-    }
-
     // ============================================
-    // STARTUP
+    // BOOTSTRAP
     // ============================================
     $(document).ready(function() {
         M.tryInit();
     });
 
-    // Also try on these events
-    $(window).on('load', function() {
-        setTimeout(function() { M.tryInit(); }, 1000);
+    $(window).on('elementor/frontend/init', function() {
+        if (typeof elementorFrontend !== 'undefined' && typeof elementorFrontend.hooks !== 'undefined') {
+            elementorFrontend.hooks.addAction('frontend/element_ready/momentum_html_pro.default', function($scope) {
+                setTimeout(function() { M.setup(); }, 500);
+            });
+        }
     });
 
-    if (typeof elementorFrontend !== 'undefined') {
-        $(window).on('elementor/frontend/init', function() {
-            M.tryInit();
-        });
-    }
+    // Safety net
+    setTimeout(function() { M.tryInit(); }, 2000);
+    setTimeout(function() { M.tryInit(); }, 5000);
 
 })(jQuery);
