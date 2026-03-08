@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Momentum Pro Editor
  * Description: Elementor widget - Visual HTML Editor with inline text selection styling
- * Version: 7.0.0
+ * Version: 7.1.0
  * Author: Yasser Momentum
  * Author URI: https://momentummix.com/
  * License: GPL v3
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
-define( 'MOMENTUM_PRO_VERSION', '7.0.0' );
+define( 'MOMENTUM_PRO_VERSION', '7.1.0' );
 define( 'MOMENTUM_PRO_PATH', plugin_dir_path( __FILE__ ) );
 define( 'MOMENTUM_PRO_URL', plugin_dir_url( __FILE__ ) );
 
@@ -123,125 +123,121 @@ final class Momentum_Pro_Editor {
             wp_send_json_error( 'Missing data' );
         }
 
+        // === الإصلاح الرئيسي: استخدام Regex بدل DOMDocument ===
         $clean_html = $this->safe_clean_html( $html );
 
         wp_send_json_success( [ 'html' => $clean_html ] );
     }
 
+    /**
+     * تنظيف HTML من عناصر الإديتور باستخدام Regex
+     * بدل DOMDocument اللي كان بيشوّه هيكل الـ HTML
+     */
     private function safe_clean_html( $html ) {
         if ( empty( $html ) ) return $html;
 
-        $dom = new \DOMDocument();
-        libxml_use_internal_errors( true );
+        // =============================================
+        // 1. إزالة عناصر UI الخاصة بالإديتور
+        // =============================================
 
-        $flags = LIBXML_HTML_NOIMPLIED;
-        if ( defined( 'LIBXML_HTML_NODEFDTD' ) ) {
-            $flags |= LIBXML_HTML_NODEFDTD;
-        }
+        // إزالة الـ badge
+        $html = preg_replace( '/<div[^>]*class="[^"]*\bm-badge\b[^"]*"[^>]*>.*?<\/div>/is', '', $html );
 
-        $wrapped = '<div id="m-safe-root">' . $html . '</div>';
-        $dom->loadHTML( '<?xml encoding="UTF-8">' . $wrapped, $flags );
-        libxml_clear_errors();
+        // إزالة الـ toolbar
+        $html = preg_replace( '/<div[^>]*id="m-toolbar"[^>]*>.*?<\/div>/is', '', $html );
 
-        $xpath = new \DOMXPath( $dom );
+        // إزالة الـ link editor
+        $html = preg_replace( '/<div[^>]*id="m-link-editor"[^>]*>.*?<\/div>/is', '', $html );
 
-        $badges = $xpath->query( '//*[contains(@class, "m-badge")]' );
-        if ( $badges ) {
-            foreach ( $badges as $badge ) {
-                $badge->parentNode->removeChild( $badge );
+        // إزالة الـ image bar
+        $html = preg_replace( '/<div[^>]*class="[^"]*\bm-img-bar\b[^"]*"[^>]*>.*?<\/div>/is', '', $html );
+
+        // إزالة الـ box bar
+        $html = preg_replace( '/<div[^>]*class="[^"]*\bm-box-bar\b[^"]*"[^>]*>.*?<\/div>/is', '', $html );
+
+        // إزالة الـ resize handle
+        $html = preg_replace( '/<div[^>]*class="[^"]*\bm-resize-h\b[^"]*"[^>]*>.*?<\/div>/is', '', $html );
+
+        // إزالة الـ notifications
+        $html = preg_replace( '/<div[^>]*class="[^"]*\bm-notify\b[^"]*"[^>]*>.*?<\/div>/is', '', $html );
+
+        // إزالة الـ custom CSS styles اللي بيضيفها الإديتور
+        $html = preg_replace( '/<style[^>]*class="[^"]*momentum-custom-css[^"]*"[^>]*>.*?<\/style>/is', '', $html );
+        $html = preg_replace( '/<style[^>]*class="[^"]*momentum-responsive-css[^"]*"[^>]*>.*?<\/style>/is', '', $html );
+
+        // =============================================
+        // 2. إزالة attributes الخاصة بالإديتور
+        // =============================================
+
+        // إزالة contenteditable
+        $html = preg_replace( '/\s+contenteditable="[^"]*"/i', '', $html );
+        $html = preg_replace( '/\s+contenteditable=\'[^\']*\'/i', '', $html );
+        $html = preg_replace( '/\s+contenteditable(?=[\s>\/])/i', '', $html );
+
+        // إزالة data attributes الخاصة بالإديتور
+        $html = preg_replace( '/\s+data-m4-[a-z0-9_-]+="[^"]*"/i', '', $html );
+        $html = preg_replace( '/\s+data-m-[a-z0-9_-]+="[^"]*"/i', '', $html );
+        $html = preg_replace( '/\s+data-m3="[^"]*"/i', '', $html );
+        $html = preg_replace( '/\s+data-m4-init="[^"]*"/i', '', $html );
+        $html = preg_replace( '/\s+data-auto-sync="[^"]*"/i', '', $html );
+        $html = preg_replace( '/\s+data-widget-id="[^"]*"/i', '', $html );
+
+        // =============================================
+        // 3. تنظيف الـ classes الخاصة بالإديتور
+        // =============================================
+        $html = preg_replace_callback( '/\bclass="([^"]*)"/i', function( $m ) {
+            $classes = $m[1];
+            // إزالة classes الإديتور فقط
+            $classes = preg_replace( '/\bmomentum-editable\b/', '', $classes );
+            $classes = preg_replace( '/\bmomentum-html-output\b/', '', $classes );
+            $classes = trim( preg_replace( '/\s+/', ' ', $classes ) );
+            if ( ! empty( $classes ) ) {
+                return 'class="' . $classes . '"';
             }
-        }
+            return ''; // إزالة الـ attribute كله لو فاضي
+        }, $html );
 
-        $toolbars = $xpath->query( '//*[@id="m-toolbar"] | //*[@id="m-link-editor"] | //*[contains(@class, "m-img-bar")] | //*[contains(@class, "m-box-bar")] | //*[contains(@class, "m-resize-h")] | //*[contains(@class, "m-notify")]' );
-        if ( $toolbars ) {
-            foreach ( $toolbars as $tb ) {
-                $tb->parentNode->removeChild( $tb );
-            }
-        }
+        // =============================================
+        // 4. تنظيف editor-only inline styles
+        // =============================================
+        $html = preg_replace_callback( '/\bstyle="([^"]*)"/i', function( $m ) {
+            $style = $m[1];
 
-        $all_elements = $xpath->query( '//*' );
-        if ( $all_elements ) {
-            foreach ( $all_elements as $el ) {
-                $el->removeAttribute( 'contenteditable' );
+            // إزالة الـ styles اللي بيضيفها الإديتور بس
+            $style = preg_replace( '/\boutline\s*:[^;]*;?\s*/i', '', $style );
+            $style = preg_replace( '/\boutline-offset\s*:[^;]*;?\s*/i', '', $style );
+            $style = preg_replace( '/\bcursor\s*:\s*text\s*;?\s*/i', '', $style );
+            $style = preg_replace( '/\b-webkit-tap-highlight-color\s*:[^;]*;?\s*/i', '', $style );
 
-                $attrs_to_remove = [];
-                foreach ( $el->attributes as $attr ) {
-                    if ( strpos( $attr->name, 'data-m4-' ) === 0 ||
-                         strpos( $attr->name, 'data-m-' ) === 0 ||
-                         $attr->name === 'data-widget-id' ||
-                         $attr->name === 'data-m3' ||
-                         $attr->name === 'data-m4-init' ) {
-                        $attrs_to_remove[] = $attr->name;
-                    }
+            $style = trim( $style, " \t\n\r\0\x0B;" );
+
+            if ( ! empty( $style ) ) {
+                // نتأكد إن الـ style بيخلص بـ semicolon
+                if ( substr( $style, -1 ) !== ';' ) {
+                    $style .= ';';
                 }
-                foreach ( $attrs_to_remove as $attr_name ) {
-                    $el->removeAttribute( $attr_name );
-                }
-
-                $style = $el->getAttribute( 'style' );
-                if ( $style ) {
-                    $clean_style = $this->clean_editor_styles_only( $style );
-                    if ( $clean_style ) {
-                        $el->setAttribute( 'style', $clean_style );
-                    } else {
-                        $el->removeAttribute( 'style' );
-                    }
-                }
+                return 'style="' . $style . '"';
             }
-        }
+            return ''; // إزالة الـ attribute كله لو فاضي
+        }, $html );
 
-        $editables = $xpath->query( '//*[contains(@class, "momentum-editable")]' );
-        if ( $editables ) {
-            foreach ( $editables as $editable ) {
-                $classes = $editable->getAttribute( 'class' );
-                $classes = preg_replace( '/\bmomentum-editable\b/', '', $classes );
-                $classes = trim( preg_replace( '/\s+/', ' ', $classes ) );
-                if ( $classes ) {
-                    $editable->setAttribute( 'class', $classes );
-                } else {
-                    $editable->removeAttribute( 'class' );
-                }
-            }
-        }
+        // =============================================
+        // 5. تنظيف نهائي
+        // =============================================
 
-        $root = $dom->getElementById( 'm-safe-root' );
-        $output = '';
-        if ( $root ) {
-            foreach ( $root->childNodes as $child ) {
-                $output .= $dom->saveHTML( $child );
-            }
-        }
+        // إزالة attributes فاضية متبقية
+        $html = preg_replace( '/\s+(class|style|id)=""\s*/i', ' ', $html );
 
-        return $output ?: $html;
-    }
+        // إزالة مسافات زيادة بين الـ tags
+        $html = preg_replace( '/>\s{2,}</', '> <', $html );
 
-    private function clean_editor_styles_only( $style ) {
-        if ( empty( $style ) ) return '';
+        // إزالة مسافات زيادة داخل الـ tags
+        $html = preg_replace( '/\s{2,}/', ' ', $html );
 
-        $properties = array_filter( array_map( 'trim', explode( ';', $style ) ) );
-        $clean_props = [];
+        // تنظيف سطور فاضية
+        $html = preg_replace( '/\n{3,}/', "\n\n", $html );
 
-        $editor_only_patterns = [
-            '/^outline\s*:/i',
-            '/^outline-offset\s*:/i',
-            '/^cursor\s*:\s*text\s*$/i',
-            '/^-webkit-tap-highlight-color\s*:/i',
-        ];
-
-        foreach ( $properties as $prop ) {
-            $is_editor_prop = false;
-            foreach ( $editor_only_patterns as $pattern ) {
-                if ( preg_match( $pattern, trim( $prop ) ) ) {
-                    $is_editor_prop = true;
-                    break;
-                }
-            }
-            if ( ! $is_editor_prop ) {
-                $clean_props[] = trim( $prop );
-            }
-        }
-
-        return implode( '; ', $clean_props );
+        return trim( $html );
     }
 }
 
