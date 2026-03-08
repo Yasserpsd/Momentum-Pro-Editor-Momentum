@@ -55,17 +55,7 @@ class Momentum_HTML_Pro_Widget extends \Elementor\Widget_Base {
             ]
         );
 
-        $this->add_control(
-            'auto_sync_enabled',
-            [
-                'label'        => esc_html__( '🔄 مزامنة تلقائية كل 5 ثواني', 'momentum-pro-editor' ),
-                'type'         => \Elementor\Controls_Manager::SWITCHER,
-                'label_on'     => esc_html__( 'فعّال', 'momentum-pro-editor' ),
-                'label_off'    => esc_html__( 'مُعطّل', 'momentum-pro-editor' ),
-                'return_value' => 'yes',
-                'default'      => 'yes',
-            ]
-        );
+        // ⛔ تم إزالة auto_sync_enabled بالكامل - لا مزامنة تلقائية
 
         $this->add_control(
             'sync_code_button',
@@ -87,16 +77,17 @@ class Momentum_HTML_Pro_Widget extends \Elementor\Widget_Base {
                 'raw'  => '<div style="background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;padding:16px;border-radius:10px;margin-top:10px;line-height:1.8;border:1px solid rgba(108,99,255,0.3);">
                     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
                         <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHZpZXdCb3g9IjAgMCAyMCAyMCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSIxMCIgY3k9IjEwIiByPSIxMCIgZmlsbD0iIzZDNjNGRiIvPjx0ZXh0IHg9IjEwIiB5PSIxNCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0iI2ZmZiIgZm9udC1zaXplPSIxMiIgZm9udC13ZWlnaHQ9ImJvbGQiPk08L3RleHQ+PC9zdmc+" style="width:20px;height:20px;">
-                        <strong style="font-size:14px;">Momentum Pro v6</strong>
+                        <strong style="font-size:14px;">Momentum Pro v7</strong>
                     </div>
                     ✏️ اضغط على أي <strong>نص</strong> عشان تعدله<br>
-                    🎯 <strong>حدد جزء من النص</strong> وغيّر لونه أو اربطه برابط<br>
-                    🎨 استخدم <strong>الـ Toolbar</strong> لتغيير الألوان والخطوط<br>
-                    📷 اضغط على أي <strong>صورة</strong> عشان تغيرها أو تغير مقاسها<br>
+                    🎯 <strong>حدد كلمة أو جملة</strong> واختار لون من الـ Toolbar<br>
+                    🔗 <strong>حدد نص</strong> واضغط 🔗 عشان تربطه برابط<br>
+                    🎨 استخدم <strong>لون + خلفية</strong> لتلوين الجزء المحدد<br>
+                    📷 اضغط على أي <strong>صورة</strong> عشان تغيرها<br>
                     🔗 اضغط مرتين على أي <strong>رابط</strong> عشان تعدله<br>
                     🖱️ كليك يمين على أي <strong>Box</strong> لأدوات متقدمة<br>
                     ↩️ <strong>Ctrl+Z</strong> للتراجع<br>
-                    🔄 المزامنة التلقائية <strong>كل 5 ثواني</strong> أو اضغط الزرار يدوياً
+                    🔄 اضغط <strong>زرار المزامنة</strong> يدوياً لحفظ تعديلاتك
                 </div>',
             ]
         );
@@ -205,7 +196,6 @@ class Momentum_HTML_Pro_Widget extends \Elementor\Widget_Base {
         $custom_css = $settings['custom_css'] ?? '';
         $widget_id  = $this->get_id();
         $is_editor  = \Elementor\Plugin::$instance->editor->is_edit_mode();
-        $auto_sync  = $settings['auto_sync_enabled'] ?? 'yes';
 
         if ( empty( $html_code ) ) {
             if ( $is_editor ) {
@@ -218,9 +208,9 @@ class Momentum_HTML_Pro_Widget extends \Elementor\Widget_Base {
         }
 
         $editor_class = $is_editor ? ' momentum-editable' : '';
-        $auto_sync_attr = ( $is_editor && $auto_sync === 'yes' ) ? ' data-auto-sync="1"' : '';
 
-        echo '<div class="momentum-html-output' . $editor_class . '" data-widget-id="' . esc_attr( $widget_id ) . '"' . $auto_sync_attr . '>';
+        // ⛔ تم إزالة data-auto-sync تماماً
+        echo '<div class="momentum-html-output' . $editor_class . '" data-widget-id="' . esc_attr( $widget_id ) . '">';
 
         if ( ! empty( $custom_css ) ) {
             echo '<style class="momentum-custom-css">' . wp_strip_all_tags( $custom_css ) . '</style>';
